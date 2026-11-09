@@ -153,9 +153,9 @@ export function isConnected() {
   if (cfg.provider === 'fixture') return true;
   // Codex's ChatGPT credential remains in Codex's own auth.json cache, not coach.json.
   if (cfg.provider === 'codex') return hasCodexAuth();
-  // Claude is intentionally setup-token only. Do not silently retain the old browser OAuth or
-  // API-key paths after the instance has been upgraded to the Agent SDK flow.
-  if (cfg.provider === 'claude' && cfg.auth?.type !== 'cli-token') return false;
+  // Claude accepts a setup token or a plain API key (used for OpenAI/Anthropic-compatible
+  // gateways such as OmniRoute). The retired browser OAuth path stays rejected.
+  if (cfg.provider === 'claude' && !['cli-token', 'apikey'].includes(cfg.auth?.type)) return false;
   return !!(cfg.auth && decrypt(cfg.auth.data));
 }
 /** What /api/config tells every client. Absent ⇒ no Coach UI exists anywhere (FR-55/56). */
@@ -179,6 +179,9 @@ export function jobEnv(jobDir) {
     // file it touches inside the short-lived, unprivileged job directory instead.
     env.CLAUDE_CONFIG_DIR = jobDir;
     env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1';
+    // Optional gateway (OmniRoute etc.): only forwarded when the operator sets it, so a stock
+    // install still talks to Anthropic directly.
+    if (process.env.ANTHROPIC_BASE_URL) env.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
   }
   if (cfg.provider === 'codex') {
     // This is the only persistent state a Codex job receives. The directory is a dedicated
@@ -186,7 +189,7 @@ export function jobEnv(jobDir) {
     env.CODEX_HOME = ensureCodexHome();
   }
   const auth = cfg.auth ? decrypt(cfg.auth.data) : null;
-  if (auth && auth.token && (cfg.provider !== 'claude' || cfg.auth.type === 'cli-token')) {
+  if (auth && auth.token && (cfg.provider !== 'claude' || ['cli-token', 'apikey'].includes(cfg.auth.type))) {
     const name = (cfg.auth.type === 'cli-token' || cfg.auth.type === 'oauth')
       ? meta.oauthEnv
       : cfg.auth.type === 'apikey' ? meta.apiKeyEnv : null;

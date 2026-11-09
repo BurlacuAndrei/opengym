@@ -155,7 +155,6 @@ export function setApiKey(k) {
   const keyStr = String(k || '').trim();
   if (!keyStr) throw new Error('paste an API key');
   if (providerMeta().deviceLogin) throw new Error('sign in with ChatGPT from the Codex device-login flow');
-  if (providerMeta().setupToken) throw new Error('use a Claude Code setup token for this provider');
   if (!providerMeta().apiKeyEnv) throw new Error('this provider takes no API key');
   save({ auth: { type: 'apikey', connectedAt: new Date().toISOString(), account: null, data: encrypt({ token: keyStr }) } });
 }
