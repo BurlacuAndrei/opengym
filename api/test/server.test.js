@@ -175,4 +175,37 @@ describe('server test harness & baseline API', () => {
       await srv.stop();
     }
   });
+
+  test('GET /api/config native passkey capability flag (#8)', async () => {
+    // 1. Unconfigured server: response has no 'native' key
+    const srvUnconfigured = await spawnServer();
+    try {
+      const res = await srvUnconfigured.fetch('/api/config');
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.equal('native' in data, false, 'unconfigured config has no native key');
+      assert.deepEqual(data, { invite_only: false });
+    } finally {
+      await srvUnconfigured.stop();
+    }
+
+    // 2. Configured server: response includes native: { rpId }
+    const sampleCert = 'AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99';
+    const srvConfigured = await spawnServer({
+      env: {
+        ANDROID_PACKAGE: 'ch.duartesantos.opengym',
+        ANDROID_CERT_SHA256: sampleCert,
+        RP_ID: 'example.com',
+      },
+    });
+    try {
+      const res = await srvConfigured.fetch('/api/config');
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.ok(data.native, 'configured config has native object');
+      assert.equal(data.native.rpId, 'example.com');
+    } finally {
+      await srvConfigured.stop();
+    }
+  });
 });

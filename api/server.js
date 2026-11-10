@@ -32,6 +32,20 @@ const MAX_BODY = 5 * 1024 * 1024;
 // Secure cookies require HTTPS; over plain http://localhost the flag would drop the cookie
 const SECURE = /^https:/i.test(ORIGIN) ? ' Secure;' : '';
 
+// Android native passkey configuration (#8)
+const ANDROID_PACKAGE = (process.env.ANDROID_PACKAGE || '').trim();
+const rawCerts = (process.env.ANDROID_CERT_SHA256 || '')
+  .split(',')
+  .map(s => s.trim().replace(/:/g, '').toLowerCase())
+  .filter(s => s.length === 64);
+const ANDROID_CERTS = rawCerts.map(hex => (hex.match(/.{2}/g) || []).join(':').toUpperCase());
+export const NATIVE_CONFIG = ANDROID_PACKAGE && ANDROID_CERTS.length > 0 ? {
+  package: ANDROID_PACKAGE,
+  fingerprints: ANDROID_CERTS,
+  rawHex: rawCerts,
+  rpId: RP_ID
+} : null;
+
 fs.mkdirSync(DATA, { recursive: true });
 // 0700 is what stops the unprivileged user that Coach jobs run as from reading any of this —
 // state files, db.json, the session secret, the provider credential. The Agent SDK process gets
@@ -273,7 +287,11 @@ const routes = {
   // the app it was before the feature existed.
   'GET /api/config': async (req, res) => {
     const coach = coachConfig.publicConfig();
-    json(res, 200, { invite_only: INVITE_ONLY, ...(coach ? { coach } : {}) });
+    json(res, 200, {
+      invite_only: INVITE_ONLY,
+      ...(coach ? { coach } : {}),
+      ...(NATIVE_CONFIG ? { native: { rpId: NATIVE_CONFIG.rpId } } : {})
+    });
   },
 
   'GET /api/me': async (req, res) => {
