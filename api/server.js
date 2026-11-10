@@ -32,7 +32,7 @@ const MAX_BODY = 5 * 1024 * 1024;
 // Secure cookies require HTTPS; over plain http://localhost the flag would drop the cookie
 const SECURE = /^https:/i.test(ORIGIN) ? ' Secure;' : '';
 
-// Android native passkey configuration (#8)
+// Android native passkey configuration (#8, #9, #10)
 const ANDROID_PACKAGE = (process.env.ANDROID_PACKAGE || '').trim();
 const rawCerts = (process.env.ANDROID_CERT_SHA256 || '')
   .split(',')
@@ -45,6 +45,17 @@ export const NATIVE_CONFIG = ANDROID_PACKAGE && ANDROID_CERTS.length > 0 ? {
   rawHex: rawCerts,
   rpId: RP_ID
 } : null;
+
+export function certFingerprintToApkOrigin(fingerprint) {
+  const cleanHex = fingerprint.trim().replace(/:/g, '').toLowerCase();
+  const b64u = Buffer.from(cleanHex, 'hex').toString('base64url');
+  return `android:apk-key-hash:${b64u}`;
+}
+
+export function expectedOrigins() {
+  if (!NATIVE_CONFIG) return ORIGIN;
+  return [ORIGIN, ...NATIVE_CONFIG.rawHex.map(certFingerprintToApkOrigin)];
+}
 
 fs.mkdirSync(DATA, { recursive: true });
 // 0700 is what stops the unprivileged user that Coach jobs run as from reading any of this —
@@ -285,6 +296,24 @@ setInterval(() => { for (const [k, v] of presence) if (Date.now() - v.updatedAt 
 
 /* ---------- routes ---------- */
 const routes = {
+  'GET /.well-known/assetlinks.json': async (req, res) => {
+    if (!NATIVE_CONFIG) return json(res, 404, { error: 'not found' });
+    const assetlinks = [
+      {
+        relation: [
+          'delegate_permission/common.handle_all_urls',
+          'delegate_permission/common.get_login_creds'
+        ],
+        target: {
+          namespace: 'android_app',
+          package_name: NATIVE_CONFIG.package,
+          sha256_cert_fingerprints: NATIVE_CONFIG.fingerprints
+        }
+      }
+    ];
+    json(res, 200, assetlinks);
+  },
+
   'GET /api/health': async (req, res) => json(res, 200, { ok: true, users: db.users.length }),
 
   // Public config the login screen needs before anyone is signed in. `coach` is absent unless
@@ -334,7 +363,7 @@ const routes = {
       verification = await verifyRegistrationResponse({
         response: body.credential,
         expectedChallenge: c.challenge,
-        expectedOrigin: ORIGIN,
+        expectedOrigin: expectedOrigins(),
         expectedRPID: RP_ID,
         requireUserVerification: false
       });
@@ -380,7 +409,7 @@ const routes = {
       verification = await verifyAuthenticationResponse({
         response: body.credential,
         expectedChallenge: c.challenge,
-        expectedOrigin: ORIGIN,
+        expectedOrigin: expectedOrigins(),
         expectedRPID: RP_ID,
         requireUserVerification: false,
         credential: {

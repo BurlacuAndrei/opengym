@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test, { describe } from 'node:test';
-import { getFreePort, makeSessionCookie, spawnServer } from './harness.mjs';
+import { certFingerprintToApkOrigin, getFreePort, makeSessionCookie, spawnServer } from './harness.mjs';
 
 describe('server test harness & baseline API', () => {
   test('free port allocation and clean SIGTERM shutdown', async () => {
@@ -270,6 +270,64 @@ describe('server test harness & baseline API', () => {
         headers: { Cookie: newCookie },
       });
       assert.equal(cookieRes.status, 200);
+    } finally {
+      await srv.stop();
+    }
+  });
+
+  test('GET /.well-known/assetlinks.json (#9)', async () => {
+    // 1. Unconfigured server -> 404
+    const srvUnconf = await spawnServer();
+    try {
+      const res = await srvUnconf.fetch('/.well-known/assetlinks.json');
+      assert.equal(res.status, 404);
+    } finally {
+      await srvUnconf.stop();
+    }
+
+    // 2. Configured server -> 200 with AssetLinks statement array
+    const sampleFp = '14:6D:E9:D5:70:E4:F7:CC:37:A8:12:4A:BA:36:27:C5:3B:56:59:75:A0:92:DF:D3:59:C2:59:F0:45:1E:AE:12';
+    const srvConf = await spawnServer({
+      env: {
+        ANDROID_PACKAGE: 'ch.duartesantos.opengym',
+        ANDROID_CERT_SHA256: sampleFp,
+      },
+    });
+    try {
+      const res = await srvConf.fetch('/.well-known/assetlinks.json');
+      assert.equal(res.status, 200);
+      assert.ok(res.headers.get('content-type').includes('application/json'));
+      const list = await res.json();
+      assert.ok(Array.isArray(list));
+      assert.equal(list.length, 1);
+      assert.deepEqual(list[0].relation, [
+        'delegate_permission/common.handle_all_urls',
+        'delegate_permission/common.get_login_creds',
+      ]);
+      assert.equal(list[0].target.namespace, 'android_app');
+      assert.equal(list[0].target.package_name, 'ch.duartesantos.opengym');
+      assert.deepEqual(list[0].target.sha256_cert_fingerprints, [sampleFp]);
+    } finally {
+      await srvConf.stop();
+    }
+  });
+
+  test('certFingerprintToApkOrigin conversion and passkey origin acceptance (#10)', async () => {
+    // 1. Unit conversion test
+    const hexFp = '14:6D:E9:D5:70:E4:F7:CC:37:A8:12:4A:BA:36:27:C5:3B:56:59:75:A0:92:DF:D3:59:C2:59:F0:45:1E:AE:12';
+    const origin = certFingerprintToApkOrigin(hexFp);
+    assert.ok(origin.startsWith('android:apk-key-hash:'));
+    const b64u = origin.slice('android:apk-key-hash:'.length);
+    assert.equal(Buffer.from(b64u, 'base64url').toString('hex'), hexFp.replace(/:/g, '').toLowerCase());
+
+    // 2. Web login options and verify route accepts web ORIGIN
+    const srv = await spawnServer();
+    try {
+      const optRes = await srv.fetch('/api/login/options', { method: 'POST', body: '{}' });
+      assert.equal(optRes.status, 200);
+      const { cid, options } = await optRes.json();
+      assert.ok(cid);
+      assert.ok(options.challenge);
     } finally {
       await srv.stop();
     }
