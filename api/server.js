@@ -405,7 +405,18 @@ const routes = {
     const body = await readBody(req);
     if (!body.state || typeof body.state !== 'object') return json(res, 400, { error: 'state required' });
     delete body.state.active;              // in-progress workouts stay device-local
-    atomicWrite(stateFile(user.id), JSON.stringify(body.state));
+
+    const file = stateFile(user.id);
+    let current = null;
+    try {
+      current = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch { current = null; }
+
+    if (current && body.baseTs !== undefined && current._ts !== body.baseTs) {
+      return json(res, 409, { error: 'conflict', state: current });
+    }
+
+    atomicWrite(file, JSON.stringify(body.state));
     json(res, 200, { ok: true, ts: body.state._ts || null });
   },
 

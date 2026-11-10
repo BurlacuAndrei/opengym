@@ -118,4 +118,61 @@ describe('server test harness & baseline API', () => {
       await srv.stop();
     }
   });
+
+  test('PUT /api/data stale state write rejection with 409 (#4)', async () => {
+    const user = { id: 'u_conflict_test', name: 'Conflict Lifter', sv: 0 };
+    const srv = await spawnServer({ users: [user] });
+
+    try {
+      const cookie = srv.cookieFor(user);
+
+      // 1. Initial write with no stored state -> succeeds
+      const initialPut = await srv.fetch('/api/data', {
+        method: 'PUT',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state: { _ts: 1000, name: 'Initial' }, baseTs: 0 }),
+      });
+      assert.equal(initialPut.status, 200);
+
+      // 2. Mismatched baseTs -> 409 conflict, returns stored state, disk unchanged
+      const conflictPut = await srv.fetch('/api/data', {
+        method: 'PUT',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state: { _ts: 2000, name: 'Stale update' }, baseTs: 999 }),
+      });
+      assert.equal(conflictPut.status, 409);
+      const conflictData = await conflictPut.json();
+      assert.equal(conflictData.error, 'conflict');
+      assert.equal(conflictData.state._ts, 1000);
+      assert.equal(conflictData.state.name, 'Initial');
+
+      const diskCheck = JSON.parse(
+        fs.readFileSync(path.join(srv.dataDir, `state-${user.id}.json`), 'utf8')
+      );
+      assert.equal(diskCheck.name, 'Initial', 'file unchanged on conflict');
+
+      // 3. Matching baseTs -> succeeds
+      const matchingPut = await srv.fetch('/api/data', {
+        method: 'PUT',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state: { _ts: 1001, name: 'Updated' }, baseTs: 1000 }),
+      });
+      assert.equal(matchingPut.status, 200);
+
+      // 4. Missing baseTs -> legacy write succeeds
+      const legacyPut = await srv.fetch('/api/data', {
+        method: 'PUT',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state: { _ts: 1002, name: 'Legacy' } }),
+      });
+      assert.equal(legacyPut.status, 200);
+
+      const finalCheck = JSON.parse(
+        fs.readFileSync(path.join(srv.dataDir, `state-${user.id}.json`), 'utf8')
+      );
+      assert.equal(finalCheck.name, 'Legacy');
+    } finally {
+      await srv.stop();
+    }
+  });
 });
