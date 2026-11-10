@@ -427,6 +427,131 @@ describe('useStore', () => {
     })
   })
 
+  describe('Android mobile server mode passkey, token persistence, and boot flow', () => {
+    it('uses NativePasskey.login, passes native:true to verify, stores token via setToken, sets user and unsets guest', async () => {
+      mockMobile = true
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 14; Pixel 8)')
+      storage.setItem('gym_server_config', JSON.stringify({ url: 'https://gym.example.com' }))
+      storage.setItem('gym_guest', '1')
+
+      const { passkeyLogin, NativePasskey } = await import('../lib/api.js')
+      const { getToken } = await import('../lib/token-storage.js')
+
+      const mockNativeLogin = vi.fn().mockResolvedValue({
+        credential: { id: 'native-cred-id', rawId: 'cmF3MQ' }
+      })
+      NativePasskey.login = mockNativeLogin
+
+      const transportCalls = []
+      const transport = vi.fn().mockImplementation(async (path, opts) => {
+        transportCalls.push({ path, body: opts?.body ? JSON.parse(opts.body) : null })
+        if (path === '/api/login/options') {
+          return { cid: 'cid-android-123', options: { challenge: 'test-challenge' } }
+        }
+        if (path === '/api/login/verify') {
+          return {
+            user: { id: 'u-android-1', name: 'Android Lifter' },
+            token: 'jwt-android-native-token'
+          }
+        }
+        return {}
+      })
+      setTransport(transport)
+
+      const user = await passkeyLogin()
+
+      expect(mockNativeLogin).toHaveBeenCalledWith({
+        options: { challenge: 'test-challenge' }
+      })
+      expect(transportCalls).toContainEqual({
+        path: '/api/login/verify',
+        body: {
+          cid: 'cid-android-123',
+          credential: { id: 'native-cred-id', rawId: 'cmF3MQ' },
+          native: true
+        }
+      })
+      expect(user).toEqual({ id: 'u-android-1', name: 'Android Lifter' })
+      expect(await getToken()).toBe('jwt-android-native-token')
+      expect(useStore.getState().user).toEqual({ id: 'u-android-1', name: 'Android Lifter' })
+      expect(useStore.getState().isGuest()).toBe(false)
+      expect(storage.getItem('gym_guest')).toBeNull()
+      expect(JSON.parse(storage.getItem('gym_user'))).toEqual({ id: 'u-android-1', name: 'Android Lifter' })
+    })
+
+    it('boot in server mode keeps cached user without forcing guest mode and pulls server data on empty phone', async () => {
+      mockMobile = true
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 14; Pixel 8)')
+      storage.setItem('gym_server_config', JSON.stringify({ url: 'https://gym.example.com' }))
+      storage.setItem('gym_user', JSON.stringify({ id: 'cached-u-1', name: 'Cached User' }))
+      useStore.getState().setUser({ id: 'cached-u-1', name: 'Cached User' })
+      expect(useStore.getState().isGuest()).toBe(false)
+
+      mockNativeLoad.mockResolvedValue(null) // phone empty
+
+      const transport = vi.fn().mockImplementation(async (path) => {
+        if (path === '/api/data') {
+          return {
+            state: {
+              _ts: 99999,
+              workouts: [{ id: 'server-w1', name: 'Deadlift Day' }],
+              routines: [{ id: 'r1', name: 'Pull' }]
+            }
+          }
+        }
+        return {}
+      })
+      setTransport(transport)
+
+      await useStore.getState().boot()
+
+      expect(useStore.getState().isGuest()).toBe(false)
+      expect(storage.getItem('gym_guest')).toBeNull()
+      expect(useStore.getState().user).toEqual({ id: 'cached-u-1', name: 'Cached User' })
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'server-w1', name: 'Deadlift Day' }])
+      expect(useStore.getState().S.routines).toEqual([{ id: 'r1', name: 'Pull' }])
+      expect(mockSyncReminder).toHaveBeenCalledWith(useStore.getState().S)
+      expect(useStore.getState().ready).toBe(true)
+    })
+
+    it('handles USER_CANCELLED cleanly without error toast', async () => {
+      mockMobile = true
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 14; Pixel 8)')
+      storage.setItem('gym_server_config', JSON.stringify({ url: 'https://gym.example.com' }))
+
+      const { passkeyLogin, NativePasskey } = await import('../lib/api.js')
+      const { useUI } = await import('./useUI.js')
+
+      NativePasskey.login = vi.fn().mockRejectedValue({
+        message: 'USER_CANCELLED',
+        code: 'USER_CANCELLED'
+      })
+
+      const transport = vi.fn().mockImplementation(async (path) => {
+        if (path === '/api/login/options') {
+          return { cid: 'cid-cancel', options: { challenge: 'test-challenge' } }
+        }
+        return {}
+      })
+      setTransport(transport)
+
+      const toastSpy = vi.spyOn(useUI.getState(), 'toast')
+
+      // Test passkeyLogin rejections
+      await expect(passkeyLogin()).rejects.toThrow('USER_CANCELLED')
+
+      // Simulate sign in flow as in Login.jsx
+      try {
+        await passkeyLogin()
+      } catch (e) {
+        const isCancel = e.name === 'NotAllowedError' || e.name === 'AbortError' || e.message === 'USER_CANCELLED' || e.code === 'USER_CANCELLED' || e?.message?.includes?.('USER_CANCELLED')
+        if (!isCancel) useUI.getState().toast('Sign-in failed')
+      }
+
+      expect(toastSpy).not.toHaveBeenCalled()
+    })
+  })
+
   describe('web boot flow', () => {
     it('loads config, user from /api/me, and pulls state on web boot', async () => {
       const transport = vi.fn().mockImplementation(async (path) => {

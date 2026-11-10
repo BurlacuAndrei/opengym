@@ -6,6 +6,8 @@ import { DEMO, DEMO_SEEDED } from '../lib/demo.js'
 import { MOBILE, nativeLoad, nativeSave, syncReminder } from '../lib/mobile.js'
 import { createLocalBackup } from '../lib/backup.js'
 import { openConflictDialog } from '../components/ConflictDialog.jsx'
+import { getServerUrl } from '../lib/server-config.js'
+import { clearToken } from '../lib/token-storage.js'
 
 const KEY = 'gym_state_v1'
 export const DEF = {
@@ -85,6 +87,7 @@ export const useStore = create((set, get) => {
     localStorage.removeItem('gym_dirty')
     localStorage.removeItem('gym_last_synced_ts')
     localStorage.removeItem(KEY)
+    clearToken().catch(() => {})
     persist(clone(DEF), false)
   }
 
@@ -202,7 +205,13 @@ export const useStore = create((set, get) => {
         } else if (hasData(S)) {
           nativeSave(S)   // first run after an update from a file-less version: seed the mirror
         }
-        get().setGuest(true)
+        const serverUrl = getServerUrl()
+        const user = get().user
+        if (serverUrl && user) {
+          await get().pullState()
+        } else {
+          get().setGuest(true)
+        }
         syncReminder(get().S)
         set({ ready: true })
         return
