@@ -208,4 +208,70 @@ describe('server test harness & baseline API', () => {
       await srvConfigured.stop();
     }
   });
+
+  test('Bearer session tokens accepted on /api/me and /api/data (#11)', async () => {
+    const user = { id: 'u_bearer_test', name: 'Bearer Lifter', sv: 0 };
+    const srv = await spawnServer({ users: [user] });
+
+    try {
+      const validToken = srv.tokenFor(user);
+
+      // 1. Bearer token works on /api/me
+      const meRes = await srv.fetch('/api/me', {
+        headers: { Authorization: `Bearer ${validToken}` },
+      });
+      assert.equal(meRes.status, 200);
+      const meData = await meRes.json();
+      assert.equal(meData.user.id, user.id);
+
+      // 2. Bearer token works on PUT /api/data and GET /api/data
+      const putRes = await srv.fetch('/api/data', {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${validToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ state: { _ts: 5000, name: 'Bearer State' } }),
+      });
+      assert.equal(putRes.status, 200);
+
+      const getRes = await srv.fetch('/api/data', {
+        headers: { Authorization: `Bearer ${validToken}` },
+      });
+      assert.equal(getRes.status, 200);
+      const getData = await getRes.json();
+      assert.equal(getData.state.name, 'Bearer State');
+
+      // 3. Expired token rejected with 401
+      const expiredToken = srv.tokenFor(user, -1); // expired 1 day ago
+      const expRes = await srv.fetch('/api/me', {
+        headers: { Authorization: `Bearer ${expiredToken}` },
+      });
+      assert.equal(expRes.status, 401);
+
+      // 4. Token predating "sign out everywhere" rejected
+      // User signs out everywhere via cookie/bearer on POST /api/logout/all
+      const logoutAllRes = await srv.fetch('/api/logout/all', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${validToken}` },
+      });
+      assert.equal(logoutAllRes.status, 200);
+
+      // Old token now has version 0, but user.sv is now 1 -> rejected with 401
+      const staleTokenRes = await srv.fetch('/api/me', {
+        headers: { Authorization: `Bearer ${validToken}` },
+      });
+      assert.equal(staleTokenRes.status, 401);
+
+      // 5. Cookie session still works with updated user version
+      user.sv = 1;
+      const newCookie = srv.cookieFor(user);
+      const cookieRes = await srv.fetch('/api/me', {
+        headers: { Cookie: newCookie },
+      });
+      assert.equal(cookieRes.status, 200);
+    } finally {
+      await srv.stop();
+    }
+  });
 });

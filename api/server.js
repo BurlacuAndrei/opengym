@@ -196,10 +196,16 @@ function makeSession(user) {
   return sign(user.id + ':' + exp + ':' + sessionVersion(user));
 }
 function readSession(req) {
-  const cookies = Object.fromEntries((req.headers.cookie || '').split(';').map(c => {
-    const i = c.indexOf('='); return i < 0 ? ['', ''] : [c.slice(0, i).trim(), c.slice(i + 1).trim()];
-  }));
-  const tok = cookies.gymsid;
+  let tok = null;
+  const auth = req.headers.authorization || '';
+  if (auth.startsWith('Bearer ')) {
+    tok = auth.slice(7).trim();
+  } else {
+    const cookies = Object.fromEntries((req.headers.cookie || '').split(';').map(c => {
+      const i = c.indexOf('='); return i < 0 ? ['', ''] : [c.slice(0, i).trim(), c.slice(i + 1).trim()];
+    }));
+    tok = cookies.gymsid;
+  }
   if (!tok) return null;
   const payload = verifySig(tok);
   if (!payload) return null;

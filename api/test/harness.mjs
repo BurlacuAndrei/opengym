@@ -104,6 +104,7 @@ export async function spawnServer(options = {}) {
     secret,
     fetch: (p, init = {}) => fetch(`${origin}${p}`, init),
     cookieFor: (u, days) => makeSessionCookie(u, secret, days),
+    tokenFor: (u, days) => makeSessionToken(u, secret, days),
     stop,
   };
 }
