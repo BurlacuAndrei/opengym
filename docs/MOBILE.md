@@ -16,6 +16,21 @@ directory on every change (iOS is allowed to evict WebView storage under pressur
 file mirror is the durable copy and is restored on launch). Backups go out through the
 OS share sheet instead of a browser download.
 
+## Connecting to a Self-Hosted Server (Optional, Android)
+
+The Android app can optionally connect to your self-hosted openGym server for passkey sign-in
+and two-way workout synchronization:
+
+1. In Android app, navigate to **Settings** → **Server**.
+2. Enter your server's `https://` address. The app validates that the server has Digital Asset Links
+   and native passkey support configured (`ANDROID_PACKAGE` and `ANDROID_CERT_SHA256`).
+3. Once connected:
+   - Sign in using Android Credential Manager with an existing passkey tied to the server domain.
+   - Or create a new server profile right from your phone.
+   - Workout edits sync automatically when online.
+   - Conflicts between phone and server prompt a choice dialog, always backing up local data first.
+4. Leaving the server address blank keeps the app completely local-only (default behavior).
+
 ## Prerequisites
 
 - Node 20+

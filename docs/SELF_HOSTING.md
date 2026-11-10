@@ -155,7 +155,72 @@ docker compose up -d --build
 The app shell is versioned (`?v=N`) so clients pick up changes on next load. Your `./data` and the
 downloaded media are untouched.
 
-## 8. The AI Coach (optional)
+## 8. Android Server Mode & Passkeys (Digital Asset Links)
+
+If your users train using the Android native app, you can optionally enable native passkey
+sign-in and two-way sync against your self-hosted instance.
+
+### Configuration
+
+Add the following to your `.env` file:
+
+```env
+ANDROID_PACKAGE=ch.duartesantos.opengym
+ANDROID_CERT_SHA256=14:6D:E9:D5:70:E4:F7:CC:37:A8:12:4A:BA:36:27:C5:3B:56:59:75:A0:92:DF:D3:59:C2:59:F0:45:1E:AE:12
+```
+
+- `ANDROID_PACKAGE`: The Android application ID (default: `ch.duartesantos.opengym`).
+- `ANDROID_CERT_SHA256`: Comma-separated list of SHA-256 certificate fingerprints (colon-separated or raw hex).
+
+When configured:
+1. `GET /api/config` includes `native: { rpId: RP_ID }` indicating native passkey support.
+2. The server hosts Digital Asset Links at `/.well-known/assetlinks.json`.
+3. Passkey registration and authentication accept Android APK origins (`android:apk-key-hash:...`).
+
+### Reverse Proxy Routing for Asset Links
+
+Android verifies app-domain association by requesting `https://<YOUR_DOMAIN>/.well-known/assetlinks.json`.
+Ensure your reverse proxy (Nginx, Caddy, Cloudflare, Traefik) routes `/.well-known/assetlinks.json`
+to the openGym web/api service and does not intercept or 404 it.
+
+Example Nginx snippet:
+```nginx
+location /.well-known/assetlinks.json {
+    proxy_pass http://localhost:8080/.well-known/assetlinks.json;
+    proxy_set_header Host $host;
+}
+```
+
+### Extracting Signing Certificate Fingerprints
+
+To find your APK or keystore SHA-256 fingerprint:
+
+**From a release or debug keystore:**
+```bash
+keytool -list -v -keystore my-release-key.keystore -alias opengym
+# Or debug keystore:
+keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android
+```
+Look for `Certificate fingerprints: SHA256: 14:6D:E9:...`.
+
+**From a built APK:**
+```bash
+apksigner verify --print-certs app-release.apk
+```
+
+> **Certificate Security Guidance:**
+> In production, configure only the SHA-256 fingerprint of your official release signing key
+> (or Google Play App Signing key if distributing via Play Store).
+> Only add debug keystore fingerprints on staging or local development servers.
+
+### User Flow (Connecting Android App to Server)
+
+1. Open openGym on Android → **Settings** → **Server**.
+2. Enter your instance URL (must begin with `https://`).
+3. Tap **Save**: the app checks connectivity and confirms the server supports Android native passkeys.
+4. The user can now sign in with their existing server passkey or create a new profile with Credential Manager.
+
+## 9. The AI Coach (optional)
 
 The Coach is an AI that designs training plans and reviews them against what your users
 actually log. It is **off on a fresh instance**, and turning it on is entirely a dashboard job
