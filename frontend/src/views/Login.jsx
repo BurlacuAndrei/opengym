@@ -32,15 +32,16 @@ export function RegisterSheet({ close }) {
       const u = await passkeyRegister(n, code.trim())
       setUser(u); close()
       const hadData = hasData(useStore.getState().S)
-      if (useStore.getState().reconcileOnConnect) {
+      if (useStore.getState().reconcileOnRegister) {
+        await useStore.getState().reconcileOnRegister()
+      } else if (useStore.getState().reconcileOnConnect) {
         await useStore.getState().reconcileOnConnect()
       } else if (hadData) {
         await pushState()
       } else {
         await pullState()
       }
-      if (hadData) { useUI.getState().toast(t('Profile created — data from this device moved into it')) }
-      else { useUI.getState().toast(t('Welcome, {0}', u.name)) }
+      if (!hadData) { useUI.getState().toast(t('Welcome, {0}', u.name)) }
     } catch (e) {
       const isCancel = e.name === 'NotAllowedError' || e.name === 'AbortError' || e.message === 'USER_CANCELLED' || e.code === 'USER_CANCELLED' || e?.message?.includes?.('USER_CANCELLED')
       if (!isCancel) useUI.getState().toast(e.message || t('Registration failed'))

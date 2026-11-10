@@ -2,9 +2,10 @@ import { useEffect } from 'react'
 import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
-import { bindUI } from './components/ui.jsx'
+import { bindUI, Button } from './components/ui.jsx'
 import { ACCENTS } from './lib/format.js'
-import { setLang, useLang } from './lib/i18n.js'
+import { t, setLang, useLang } from './lib/i18n.js'
+import { passkeyLogin } from './lib/api.js'
 import { setNav } from './lib/nav.js'
 import { useWakeLock } from './lib/wakelock.js'
 import { startFlow } from './sheets.jsx'
@@ -30,6 +31,54 @@ import CoachProposal from './views/CoachProposal.jsx'
 
 bindUI(useUI)   // lets the shared controls open sheets without importing the store at module scope
 
+export function SessionExpiredBanner({ onSignIn }) {
+  const { setUser, pullState, reconcileOnConnect } = useStore()
+  const handleReauth = async () => {
+    if (onSignIn) { await onSignIn(); return }
+    try {
+      const u = await passkeyLogin()
+      setUser(u)
+      useStore.setState({ sessionExpired: false, reAuthNeeded: false })
+      if (reconcileOnConnect) {
+        await reconcileOnConnect()
+      } else {
+        await pullState()
+      }
+      useUI.getState().toast(t('Welcome back, {0}', u.name))
+    } catch (e) {
+      const isCancel = e.name === 'NotAllowedError' || e.name === 'AbortError' || e.message === 'USER_CANCELLED' || e.code === 'USER_CANCELLED' || e?.message?.includes?.('USER_CANCELLED')
+      if (!isCancel) useUI.getState().toast(e.message || t('Sign-in failed'))
+    }
+  }
+
+  return (
+    <div
+      role="alert"
+      className="session-expired-banner"
+      style={{
+        position: 'sticky',
+        top: 0,
+        zIndex: 100,
+        background: 'var(--bg-card, #1c1c1e)',
+        borderBottom: '1px solid var(--sep, rgba(255,255,255,0.12))',
+        padding: '10px 14px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--label-1)', minWidth: 0 }}>
+        <span style={{ color: 'var(--yellow, #eab308)', display: 'flex', flexShrink: 0 }}><Icon name="info" /></span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('Session expired. Sign in to resume sync.')}</span>
+      </div>
+      <Button variant="primary" size="sm" onClick={handleReauth} style={{ flexShrink: 0 }}>
+        {t('Sign in')}
+      </Button>
+    </div>
+  )
+}
+
 function applyPrefs(theme, accent) {
   const de = document.documentElement
   de.dataset.theme = theme === 'light' ? 'light' : 'dark'
@@ -43,6 +92,7 @@ function Shell() {
   const loc = useLocation()
   const { S, user, ready } = useStore()
   const isGuest = useStore(s => s.isGuest())
+  const sessionExpired = useStore(s => Boolean(s.sessionExpired || s.reAuthNeeded))
   const langV = useLang()   // re-renders the whole shell when the language (pack) changes
   useEffect(() => { setNav(navigate) }, [navigate])
   useEffect(() => { applyPrefs(S.theme, S.accent) }, [S.theme, S.accent])
@@ -64,6 +114,7 @@ function Shell() {
 
   return (
     <>
+      {sessionExpired && <SessionExpiredBanner />}
       {/* keyed on the route: a view that throws is contained, and switching tabs
           re-mounts the boundary, so the tab bar is always a way out */}
       <div id="app" className="vfade" key={loc.pathname}>

@@ -391,10 +391,7 @@ export function ServerSection({ toast }) {
       const res = await verifyServer(url)
       if (res.ok) {
         if (res.removed) {
-          await (useStore.getState().disconnectServer ? useStore.getState().disconnectServer() : clearServerConfig())
-          setUrl('')
-          setSavedUrl('')
-          toast(t('Server removed — keeping local data only'))
+          handleClear()
         } else {
           setUrl(res.config.url)
           setSavedUrl(res.config.url)
@@ -409,12 +406,46 @@ export function ServerSection({ toast }) {
     }
   }
 
-  const handleClear = async () => {
-    await (useStore.getState().disconnectServer ? useStore.getState().disconnectServer() : clearServerConfig())
-    setUrl('')
-    setSavedUrl('')
-    setError('')
-    toast(t('Server removed — keeping local data only'))
+  const handleClear = () => {
+    useUI.getState().openSheet(close => (
+      <div style={{ textAlign: 'center', padding: '6px 0', minWidth: 260 }}>
+        <h3 style={{ marginBottom: 8 }}>{t('Disconnect from server')}</h3>
+        <div className="muted" style={{ marginBottom: 14, lineHeight: 1.5 }}>
+          {t('Keep synced data on this device, or remove server data and start fresh? (Pre-connection backups are kept.)')}
+        </div>
+        <Button
+          variant="primary"
+          style={{ width: '100%', marginBottom: 8 }}
+          onClick={async () => {
+            close()
+            await (useStore.getState().disconnectServer ? useStore.getState().disconnectServer({ removeData: false }) : clearServerConfig())
+            setUrl('')
+            setSavedUrl('')
+            setError('')
+            toast(t('Server removed — keeping local data only'))
+          }}
+        >
+          {t('Keep local data')}
+        </Button>
+        <Button
+          variant="danger"
+          style={{ width: '100%', marginBottom: 8 }}
+          onClick={async () => {
+            close()
+            await (useStore.getState().disconnectServer ? useStore.getState().disconnectServer({ removeData: true }) : clearServerConfig())
+            setUrl('')
+            setSavedUrl('')
+            setError('')
+            toast(t('Server removed — local data reset'))
+          }}
+        >
+          {t('Remove server data')}
+        </Button>
+        <Button variant="ghost" className="dim" style={{ width: '100%' }} onClick={close}>
+          {t('Cancel')}
+        </Button>
+      </div>
+    ), { kind: 'center' })
   }
 
   return (

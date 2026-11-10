@@ -13,6 +13,26 @@ vi.mock('../lib/mobile.js', () => ({
   syncReminder: (...args) => mockSyncReminder(...args),
 }))
 
+let appResumeListeners = []
+vi.mock('@capacitor/app', () => ({
+  App: {
+    addListener: vi.fn((event, cb) => {
+      if (event === 'resume') appResumeListeners.push(cb)
+      return Promise.resolve({ remove: vi.fn() })
+    })
+  }
+}))
+
+let windowOnlineListeners = []
+if (typeof window === 'undefined') {
+  globalThis.window = {
+    addEventListener: vi.fn((event, cb) => {
+      if (event === 'online') windowOnlineListeners.push(cb)
+    }),
+    removeEventListener: vi.fn()
+  }
+}
+
 function createLocalStorage(initial = {}) {
   let store = { ...initial }
   return {
@@ -85,6 +105,13 @@ describe('useStore', () => {
     mockNativeLoad.mockReset()
     mockNativeSave.mockReset()
     mockSyncReminder.mockReset()
+    appResumeListeners = []
+    windowOnlineListeners = []
+    if (globalThis.window) {
+      globalThis.window.addEventListener = vi.fn((event, cb) => {
+        if (event === 'online') windowOnlineListeners.push(cb)
+      })
+    }
 
     storage = createLocalStorage()
     Object.defineProperty(globalThis, 'localStorage', {
@@ -1139,6 +1166,332 @@ describe('useStore', () => {
       expect(storage.getItem(backup.key)).toBeTruthy()
       const savedBackup = JSON.parse(storage.getItem(backup.key))
       expect(savedBackup.state.workouts).toEqual([{ id: 'pre-conn-w', name: 'Pre-connection workout' }])
+    })
+
+    it('disconnectServer with removeData: true resets local state to DEF while keeping pre-connection backup (#28)', async () => {
+      const { createLocalBackup } = await import('../lib/backup.js')
+      const { setToken, getToken } = await import('../lib/token-storage.js')
+      const { saveServerConfig, getServerUrl } = await import('../lib/server-config.js')
+
+      await setToken('token-to-clear')
+      saveServerConfig({ url: 'https://gym.example.com' })
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u-disconnect-remove' })
+      store.update(s => {
+        s.workouts = [{ id: 'w-remove', name: 'Workout from server' }]
+        s.routines = [{ id: 'r-remove', name: 'Routine from server' }]
+      }, false)
+
+      // Pre-connection backup created earlier
+      const backup = createLocalBackup(useStore.getState().S, 1700000001000)
+      expect(storage.getItem('gym_backup_latest')).toBeTruthy()
+
+      await store.disconnectServer({ removeData: true })
+
+      // Token and server config cleared
+      expect(await getToken()).toBeNull()
+      expect(getServerUrl()).toBe('')
+      expect(useStore.getState().user).toBeNull()
+      expect(useStore.getState().isGuest()).toBe(true)
+
+      // Local state is reset to DEF (workouts and routines empty)
+      expect(useStore.getState().S.workouts).toEqual([])
+      expect(useStore.getState().S.routines).toEqual([])
+
+      // Pre-connection backup is STILL INTACT
+      expect(storage.getItem('gym_backup_latest')).toBeTruthy()
+      expect(storage.getItem(backup.key)).toBeTruthy()
+      const savedBackup = JSON.parse(storage.getItem(backup.key))
+      expect(savedBackup.state.workouts).toEqual([{ id: 'w-remove', name: 'Workout from server' }])
+    })
+  })
+
+  describe('offer phone data import on register vs start fresh with backup (#20)', () => {
+    it('phone has data -> choice "upload" pushes phone state to server and keeps local state', async () => {
+      const transportCalls = []
+      const transport = vi.fn().mockImplementation(async (path, opts) => {
+        transportCalls.push({ path, method: opts?.method, body: opts?.body ? JSON.parse(opts.body) : null })
+        if (path === '/api/data') return { ok: true, ts: 99999 }
+        return {}
+      })
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u-reg-1', name: 'New User' })
+      store.update(s => {
+        s.workouts = [{ id: 'phone-reg-1', name: 'Phone Workout' }]
+      }, false)
+
+      await store.reconcileOnRegister('upload')
+
+      // Uploads to server
+      expect(transportCalls).toContainEqual(expect.objectContaining({
+        path: '/api/data',
+        method: 'PUT'
+      }))
+      // Local state is preserved
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'phone-reg-1', name: 'Phone Workout' }])
+      // Synced ts updated
+      expect(storage.getItem('gym_last_synced_ts')).toBe('99999')
+      expect(storage.getItem('gym_dirty')).toBeNull()
+    })
+
+    it('phone has data -> choice "decline" creates backup first and replaces with server state', async () => {
+      const transport = vi.fn()
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u-reg-2', name: 'Declining User' })
+      store.update(s => {
+        s.workouts = [{ id: 'w-phone-decline', name: 'Phone Pre-Backup Workout' }]
+        s.routines = [{ id: 'r-phone-decline', name: 'Phone Routine' }]
+      }, false)
+
+      const serverState = {
+        _ts: 88888,
+        workouts: [{ id: 'w-srv-clean', name: 'Clean Server Workout' }],
+        routines: []
+      }
+
+      await store.reconcileOnRegister('decline', serverState)
+
+      // 1. Pre-connection backup was created with the phone data
+      const latestBackupRaw = storage.getItem('gym_backup_latest')
+      expect(latestBackupRaw).toBeTruthy()
+      const backup = JSON.parse(latestBackupRaw)
+      expect(backup.state.workouts).toEqual([{ id: 'w-phone-decline', name: 'Phone Pre-Backup Workout' }])
+
+      // 2. Local state was replaced with server state
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'w-srv-clean', name: 'Clean Server Workout' }])
+      expect(storage.getItem('gym_last_synced_ts')).toBe('88888')
+      expect(storage.getItem('gym_dirty')).toBeNull()
+
+      // 3. Did NOT push local data to server
+      expect(transport).not.toHaveBeenCalledWith('/api/data', expect.objectContaining({ method: 'PUT' }))
+    })
+
+    it('no phone data -> pulls silently without opening dialog or creating backup', async () => {
+      const { useUI } = await import('./useUI.js')
+      useUI.getState().closeAll()
+
+      const serverState = {
+        _ts: 77777,
+        workouts: [{ id: 'w-fresh-srv', name: 'Fresh Server Workout' }]
+      }
+      const transport = vi.fn().mockImplementation(async (path) => {
+        if (path === '/api/data') return { state: serverState }
+        return {}
+      })
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u-fresh', name: 'Fresh User' })
+      // Empty phone state
+      expect(store.S.workouts.length).toBe(0)
+
+      await store.reconcileOnRegister()
+
+      // Automatically pulled server state
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'w-fresh-srv', name: 'Fresh Server Workout' }])
+      // No backup created
+      expect(storage.getItem('gym_backup_latest')).toBeNull()
+      // No sheets opened
+      expect(useUI.getState().sheets.length).toBe(0)
+    })
+
+    it('phone has data with no choice passed -> opens RegisterImportDialog', async () => {
+      const { useUI } = await import('./useUI.js')
+      useUI.getState().closeAll()
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u-prompt', name: 'Prompt User' })
+      store.update(s => {
+        s.workouts = [{ id: 'w-prompt', name: 'Needs Choice' }]
+      }, false)
+
+      await store.reconcileOnRegister()
+
+      expect(useUI.getState().sheets.length).toBe(1)
+    })
+  })
+
+  describe('pull on app resume and online event in server mode only (#23)', () => {
+    it('in server mode: resume trigger pulls from server', async () => {
+      const transportCalls = []
+      const transport = vi.fn().mockImplementation(async (path, opts) => {
+        transportCalls.push({ path, method: opts?.method || 'GET' })
+        if (path === '/api/data') {
+          return { state: { _ts: 101010, workouts: [{ id: 'w-resume', name: 'Resume Workout' }] } }
+        }
+        return {}
+      })
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u-server-1' })
+      expect(store.isServerMode()).toBe(true)
+
+      // Trigger app resume via registered @capacitor/app listener
+      expect(appResumeListeners.length).toBeGreaterThan(0)
+      await appResumeListeners[0]()
+
+      expect(transportCalls).toContainEqual({ path: '/api/data', method: 'GET' })
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'w-resume', name: 'Resume Workout' }])
+    })
+
+    it('in server mode: online trigger pulls when not dirty and pushes when dirty', async () => {
+      const transportCalls = []
+      const transport = vi.fn().mockImplementation(async (path, opts) => {
+        transportCalls.push({ path, method: opts?.method || 'GET', body: opts?.body })
+        if (path === '/api/data') {
+          if (opts?.method === 'PUT') return { ok: true, ts: 303030 }
+          return { state: { _ts: 202020, workouts: [{ id: 'w-online-clean', name: 'Online Pulled' }] } }
+        }
+        return {}
+      })
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u-server-2' })
+      expect(store.isServerMode()).toBe(true)
+
+      // 1. Not dirty: online trigger pulls
+      storage.removeItem('gym_dirty')
+      expect(windowOnlineListeners.length).toBeGreaterThan(0)
+      await windowOnlineListeners[0]()
+      expect(transportCalls).toContainEqual({ path: '/api/data', method: 'GET', body: undefined })
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'w-online-clean', name: 'Online Pulled' }])
+
+      // 2. Dirty: online trigger pushes
+      transportCalls.length = 0
+      storage.setItem('gym_dirty', '1')
+      await windowOnlineListeners[0]()
+      expect(transportCalls).toContainEqual(expect.objectContaining({ path: '/api/data', method: 'PUT' }))
+      expect(storage.getItem('gym_dirty')).toBeNull()
+    })
+
+    it('in local-only mode: resume and online triggers do nothing', async () => {
+      const transport = vi.fn()
+      setTransport(transport)
+
+      const store = useStore.getState()
+      // Local-only: guest mode, no user
+      store.setUser(null)
+      store.setGuest(true)
+      expect(store.isServerMode()).toBe(false)
+      storage.setItem('gym_dirty', '1')
+
+      // Trigger resume
+      if (appResumeListeners.length > 0) {
+        await appResumeListeners[0]()
+      }
+      // Trigger online
+      if (windowOnlineListeners.length > 0) {
+        await windowOnlineListeners[0]()
+      }
+
+      // No network calls made
+      expect(transport).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('session-expired on 401 vs offline error (#24)', () => {
+    it('401 on pushState sets sessionExpired and reAuthNeeded, keeps local data and dirty flag', async () => {
+      const err401 = new Error('HTTP 401')
+      err401.status = 401
+      const transport = vi.fn().mockRejectedValue(err401)
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u-auth-test', name: 'Auth User' })
+      store.update(s => {
+        s.workouts = [{ id: 'w-dirty-auth', name: 'Important workout' }]
+      }, false)
+
+      expect(store.sessionExpired).toBe(false)
+      expect(store.reAuthNeeded).toBe(false)
+
+      await store.pushState()
+
+      // Flags set in store
+      expect(useStore.getState().sessionExpired).toBe(true)
+      expect(useStore.getState().reAuthNeeded).toBe(true)
+
+      // Local data is NOT wiped
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'w-dirty-auth', name: 'Important workout' }])
+
+      // Dirty flag is preserved
+      expect(storage.getItem('gym_dirty')).toBe('1')
+
+      // User remains set so banner can be displayed
+      expect(useStore.getState().user).toEqual({ id: 'u-auth-test', name: 'Auth User' })
+    })
+
+    it('401 on pullState sets sessionExpired and reAuthNeeded, keeping local data', async () => {
+      const err401 = new Error('HTTP 401')
+      err401.status = 401
+      const transport = vi.fn().mockRejectedValue(err401)
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u-pull-auth', name: 'Pull User' })
+      store.update(s => {
+        s.workouts = [{ id: 'w-stay-on-pull-401' }]
+      }, false)
+
+      await store.pullState()
+
+      expect(useStore.getState().sessionExpired).toBe(true)
+      expect(useStore.getState().reAuthNeeded).toBe(true)
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'w-stay-on-pull-401' }])
+    })
+
+    it('offline error on sync does not set sessionExpired, preserves local state and marks dirty', async () => {
+      const offlineErr = new Error('Failed to fetch')
+      offlineErr.offline = true
+      const transport = vi.fn().mockRejectedValue(offlineErr)
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u-offline-test' })
+      store.update(s => {
+        s.workouts = [{ id: 'w-offline-keep' }]
+      }, false)
+
+      await store.pushState()
+
+      // sessionExpired and reAuthNeeded NOT set on offline error
+      expect(useStore.getState().sessionExpired).toBe(false)
+      expect(useStore.getState().reAuthNeeded).toBe(false)
+      expect(storage.getItem('gym_dirty')).toBe('1')
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'w-offline-keep' }])
+
+      // pullState also does not set sessionExpired on offline error
+      await store.pullState()
+      expect(useStore.getState().sessionExpired).toBe(false)
+      expect(useStore.getState().reAuthNeeded).toBe(false)
+    })
+
+    it('setUser resets sessionExpired and reAuthNeeded flags', () => {
+      useStore.setState({ sessionExpired: true, reAuthNeeded: true })
+      expect(useStore.getState().sessionExpired).toBe(true)
+
+      useStore.getState().setUser({ id: 'u-reauthed', name: 'Reauthed User' })
+      expect(useStore.getState().sessionExpired).toBe(false)
+      expect(useStore.getState().reAuthNeeded).toBe(false)
+    })
+
+    it('renders session-expired banner with sign-in action in App when sessionExpired is true', async () => {
+      const React = (await import('react')).default
+      const { renderToStaticMarkup } = await import('react-dom/server')
+      const { SessionExpiredBanner } = await import('../App.jsx')
+
+      useStore.setState({ sessionExpired: true, user: { id: 'u1', name: 'User 1' } })
+      const html = renderToStaticMarkup(React.createElement(SessionExpiredBanner))
+      expect(html).toContain('session-expired-banner')
+      expect(html).toContain('Session expired')
+      expect(html).toContain('Sign in')
     })
   })
 })

@@ -5,9 +5,10 @@ import { registerCustom } from '../lib/exercises.js'
 import { DEMO, DEMO_SEEDED } from '../lib/demo.js'
 import { MOBILE, nativeLoad, nativeSave, syncReminder } from '../lib/mobile.js'
 import { createLocalBackup } from '../lib/backup.js'
-import { openConflictDialog } from '../components/ConflictDialog.jsx'
+import { openConflictDialog, openRegisterImportDialog } from '../components/ConflictDialog.jsx'
 import { getServerUrl, clearServerConfig } from '../lib/server-config.js'
 import { clearToken } from '../lib/token-storage.js'
+import { App as CapApp } from '@capacitor/app'
 
 const KEY = 'gym_state_v1'
 export const DEF = {
@@ -80,6 +81,14 @@ export const useStore = create((set, get) => {
     })
   }
 
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('online', () => get().handleOnline?.())
+  }
+
+  try {
+    CapApp?.addListener?.('resume', () => get().handleResume?.())?.catch?.(() => {})
+  } catch (e) { /* ignore */ }
+
   // Everything a sign-out leaves behind on this device, whichever way it was triggered.
   const clearLocalSession = () => {
     get().setUser(null)
@@ -95,6 +104,8 @@ export const useStore = create((set, get) => {
     S: (() => { const s = loadState(); registerCustom(s.customEx); return s })(),
     user: (() => { try { return JSON.parse(localStorage.getItem('gym_user')) || null } catch { return null } })(),
     ready: false,
+    sessionExpired: false,
+    reAuthNeeded: false,
     // Instance capabilities from GET /api/config. `config.coach` is present only when the
     // owner has both enabled the Coach and connected a provider — every Coach entry point in
     // the app hangs off it, so an unconfigured instance renders exactly what it always did.
@@ -108,13 +119,14 @@ export const useStore = create((set, get) => {
     },
     replaceState(S, push = false) { persist(clone(S), push) },
 
+    isServerMode: () => Boolean(get().user && (!MOBILE || getServerUrl())),
     isGuest: () => localStorage.getItem('gym_guest') === '1',
     setGuest(v) { if (v) localStorage.setItem('gym_guest', '1'); else localStorage.removeItem('gym_guest'); set({}) },
 
     setUser(u) {
       if (u) { localStorage.setItem('gym_user', JSON.stringify(u)); localStorage.removeItem('gym_guest') }
       else localStorage.removeItem('gym_user')
-      set({ user: u })
+      set({ user: u, sessionExpired: false, reAuthNeeded: false })
     },
 
     async pushState() {
@@ -133,6 +145,8 @@ export const useStore = create((set, get) => {
         localStorage.setItem('gym_dirty', '1')
         if (e.status === 409 || e.statusCode === 409) {
           openConflictDialog({ serverState: e.serverState || e.state || e.data?.state || e.data?.serverState })
+        } else if (e.status === 401 || e.statusCode === 401) {
+          set({ sessionExpired: true, reAuthNeeded: true })
         }
       }
     },
@@ -150,7 +164,68 @@ export const useStore = create((set, get) => {
           persist(next, false)
           if (state._ts) localStorage.setItem('gym_last_synced_ts', String(state._ts))
         } else if (hasData(S)) { await get().pushState() }
-      } catch (e) { /* offline — keep local */ }
+      } catch (e) {
+        if (e.status === 401 || e.statusCode === 401) {
+          set({ sessionExpired: true, reAuthNeeded: true })
+        }
+        /* offline — keep local */
+      }
+    },
+
+    async handleResume() {
+      if (!get().isServerMode()) return
+      await get().pullState()
+    },
+
+    async handleOnline() {
+      if (!get().isServerMode()) return
+      const dirty = localStorage.getItem('gym_dirty') === '1'
+      if (dirty) {
+        await get().pushState()
+      } else {
+        await get().pullState()
+      }
+    },
+
+    async reconcileOnRegister(choice, serverData) {
+      const S = get().S
+      const phoneHasData = hasData(S)
+      if (!phoneHasData) {
+        await get().pullState(serverData)
+        return
+      }
+
+      const c = typeof choice === 'string' ? choice.toLowerCase() : choice
+      if (c === 'upload' || c === true) {
+        await get().pushState()
+        return
+      }
+
+      if (c === 'decline' || c === 'fresh' || c === false) {
+        createLocalBackup(S)
+        let serverState = serverData
+        if (serverState === undefined) {
+          try {
+            const res = await api('/api/data')
+            serverState = res?.state ?? null
+          } catch (e) {
+            serverState = null
+          }
+        }
+        const next = Object.assign(clone(DEF), serverState || {})
+        get().replaceState(next, false)
+        if (serverState?._ts) localStorage.setItem('gym_last_synced_ts', String(serverState._ts))
+        else localStorage.removeItem('gym_last_synced_ts')
+        localStorage.removeItem('gym_dirty')
+        if (MOBILE) nativeSave(get().S)
+        return
+      }
+
+      openRegisterImportDialog({
+        onChoice: async userChoice => {
+          await get().reconcileOnRegister(userChoice, serverData)
+        }
+      })
     },
 
     async reconcileOnConnect(serverData) {
@@ -178,7 +253,8 @@ export const useStore = create((set, get) => {
       }
     },
 
-    async disconnectServer() {
+    async disconnectServer(opts = {}) {
+      const removeData = typeof opts === 'boolean' ? opts : Boolean(opts?.removeData)
       clearTimeout(pushTm)
       await clearToken().catch(() => {})
       clearServerConfig()
@@ -186,8 +262,12 @@ export const useStore = create((set, get) => {
       get().setGuest(true)
       localStorage.removeItem('gym_dirty')
       localStorage.removeItem('gym_last_synced_ts')
-      if (MOBILE) {
-        nativeSave(get().S)
+      if (removeData) {
+        persist(clone(DEF), false)
+      } else {
+        if (MOBILE) {
+          nativeSave(get().S)
+        }
       }
     },
 
@@ -288,4 +368,5 @@ export const useStore = create((set, get) => {
 export { hasData }
 export const resolveConflict = (choice, serverState) => useStore.getState().resolveConflict(choice, serverState)
 export const reconcileOnConnect = (serverState) => useStore.getState().reconcileOnConnect(serverState)
-export const disconnectServer = () => useStore.getState().disconnectServer()
+export const reconcileOnRegister = (choice, serverState) => useStore.getState().reconcileOnRegister(choice, serverState)
+export const disconnectServer = (opts) => useStore.getState().disconnectServer(opts)

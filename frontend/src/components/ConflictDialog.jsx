@@ -72,4 +72,72 @@ export function openConflictDialog(opts = {}) {
 
 export const conflictDialogSheet = openConflictDialog
 
+export function RegisterImportDialog({ onChoice, close }) {
+  const choose = async choice => {
+    close?.()
+    if (choice === 'upload') {
+      useUI.getState().toast(t('Profile created — data from this device moved into it'))
+    } else if (choice === 'decline') {
+      useUI.getState().toast(t('Started fresh — device data backed up'))
+    }
+    await onChoice?.(choice)
+  }
+
+  return (
+    <div style={{ textAlign: 'center', padding: '6px 0', minWidth: 260 }}>
+      <h3 style={{ marginBottom: 8 }}>{t('Existing device data')}</h3>
+      <div className="muted" style={{ marginBottom: 14, lineHeight: 1.5 }}>
+        {t('You have workouts logged on this device. Upload them to your new profile, or start fresh?')}
+      </div>
+      <div className="small dim" style={{ marginBottom: 18, lineHeight: 1.4 }}>
+        {t('Starting fresh will create a local backup of your device data first.')}
+      </div>
+
+      <Button
+        variant="primary"
+        style={{ width: '100%', marginBottom: 8 }}
+        onClick={() => choose('upload')}
+      >
+        {t('Upload to profile')}
+      </Button>
+
+      <Button
+        variant="tinted"
+        style={{ width: '100%', marginBottom: 8 }}
+        onClick={() => choose('decline')}
+      >
+        {t('Start fresh')}
+      </Button>
+
+      <Button
+        variant="ghost"
+        className="dim"
+        style={{ width: '100%' }}
+        onClick={() => choose('cancel')}
+      >
+        {t('Cancel')}
+      </Button>
+    </div>
+  )
+}
+
+export function openRegisterImportDialog(opts = {}) {
+  const { onChoice, locked = false } = opts
+  return new Promise(resolve => {
+    useUI.getState().openSheet(
+      close => (
+        <RegisterImportDialog
+          close={close}
+          onChoice={async choice => {
+            close()
+            await onChoice?.(choice)
+            resolve(choice)
+          }}
+        />
+      ),
+      { kind: 'center', locked }
+    )
+  })
+}
+
 export default ConflictDialog
