@@ -10,6 +10,7 @@ import { wakeLockSupported } from '../lib/wakelock.js'
 import { t, LANGS, INSTR_LANGS } from '../lib/i18n.js'
 import { DEMO, REPO } from '../lib/demo.js'
 import { MOBILE, shareExport, syncReminder } from '../lib/mobile.js'
+import { getServerUrl, clearServerConfig, verifyServer } from '../lib/server-config.js'
 import { loadStarterPlan, confirmSheet, importFromApp } from '../sheets.jsx'
 import { coachAvailable, hasConsent } from '../lib/coach.js'
 import { forgetCoach } from '../lib/coach-api.js'
@@ -100,6 +101,9 @@ export default function Settings() {
       )}
     </Section>
     {!user && !DEMO && !MOBILE && <p className="sect-f" style={{ marginTop: -18, marginBottom: 22 }}>{t('Guest mode — data lives only in this browser.')}</p>}
+
+    {/* ---------- server (Android native build only) ---------- */}
+    {MOBILE && IS_ANDROID && <ServerSection toast={toast} />}
 
     {/* ---------- general ---------- */}
     <Section title={t('General')} footer={t('Note: switching units only changes the label — logged numbers are not converted.')}>
@@ -360,3 +364,81 @@ function RegisterInline({ close, setUser, pushState, pullState, toast }) {
     <div style={{ height: 12 }} /><Button variant="primary" onClick={go}>{t('Create passkey')}</Button>
   </>
 }
+
+export function ServerSection({ toast }) {
+  const [url, setUrl] = useState(() => getServerUrl())
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [savedUrl, setSavedUrl] = useState(() => getServerUrl())
+
+  const handleSave = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const res = await verifyServer(url)
+      if (res.ok) {
+        if (res.removed) {
+          setUrl('')
+          setSavedUrl('')
+          toast(t('Server removed — keeping local data only'))
+        } else {
+          setUrl(res.config.url)
+          setSavedUrl(res.config.url)
+          toast(t('Server connected'))
+        }
+      } else {
+        setError(res.error)
+        toast(res.error)
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleClear = () => {
+    clearServerConfig()
+    setUrl('')
+    setSavedUrl('')
+    setError('')
+    toast(t('Server removed — keeping local data only'))
+  }
+
+  return (
+    <Section
+      title={t('Server')}
+      footer={
+        error
+          ? error
+          : savedUrl
+            ? t('Connected to {0}', savedUrl)
+            : t('Self-hosted openGym server for syncing and passkeys.')
+      }
+    >
+      <div className="lrow" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 10, padding: '12px 14px' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <TextField
+            value={url}
+            onChange={e => { setUrl(e.target.value); setError('') }}
+            placeholder="https://opengym.example.com"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck="false"
+            inputMode="url"
+            style={{ flex: 1 }}
+          />
+          <Button variant="primary" size="sm" disabled={busy} onClick={handleSave}>
+            {busy ? t('Checking…') : t('Save')}
+          </Button>
+        </div>
+        {savedUrl && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <Button variant="danger" size="sm" disabled={busy} onClick={handleClear}>
+              {t('Disconnect')}
+            </Button>
+          </div>
+        )}
+      </div>
+    </Section>
+  )
+}
+
