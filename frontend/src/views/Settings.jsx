@@ -22,7 +22,7 @@ export default function Settings() {
   const S = useStore(s => s.S)
   const user = useStore(s => s.user)
   const config = useStore(s => s.config)
-  const { update, replaceState, setUser, pullState, pushState, signOut, signOutAll, resetDemo } = useStore()
+  const { update, replaceState, setUser, pullState, pushState, signOut, signOutAll, resetDemo, reconcileOnConnect, disconnectServer } = useStore()
   const toast = useUI(s => s.toast)
   const fileRef = useRef(null)
   const importRef = useRef(null)
@@ -53,7 +53,12 @@ export default function Settings() {
     rd.readAsText(f)
   }
   const signInHere = async () => {
-    try { const u = await passkeyLogin(); setUser(u); await pullState(); toast(t('Welcome back, {0}', u.name)) }
+    try {
+      const u = await passkeyLogin()
+      setUser(u)
+      await (reconcileOnConnect ? reconcileOnConnect() : pullState())
+      toast(t('Welcome back, {0}', u.name))
+    }
     catch (e) { if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast(e.message || t('Sign-in failed')) }
   }
   const registerHere = () => useUI.getState().openSheet(close => <RegisterInline close={close} setUser={setUser} pushState={pushState} pullState={pullState} toast={toast} />)
@@ -77,8 +82,8 @@ export default function Settings() {
     </div>
 
     {/* ---------- account (demo and mobile builds have nothing to sign in to) ---------- */}
-    <Section title={MOBILE ? t('Your data') : DEMO ? t('Demo') : t('Account')}>
-      {MOBILE ? <>
+    <Section title={MOBILE && !getServerUrl() ? t('Your data') : DEMO ? t('Demo') : t('Account')}>
+      {MOBILE && !getServerUrl() ? <>
         <Row icon="lock" iconTint="var(--acc)" title={t('All data stays on this phone')} subtitle={t('No account, no cloud — back it up anytime with Export below.')} />
         <Row icon="rocket" iconTint="var(--indigo)" title={t('Self-host openGym')} subtitle={t('Passkey sign-in, sync across your devices, your own data.')} accessory="chevron"
           onClick={() => window.open(REPO, '_blank', 'noopener')} />
@@ -353,8 +358,16 @@ function RegisterInline({ close, setUser, pushState, pullState, toast }) {
     if (!n) { toast(t('Enter a name')); return }
     try {
       const u = await passkeyRegister(n); setUser(u); close()
-      if (hasData(useStore.getState().S)) { await pushState(); toast(t('Profile created — data moved into it')) }
-      else { await pullState(); toast(t('Welcome, {0}', u.name)) }
+      const hadData = hasData(useStore.getState().S)
+      if (useStore.getState().reconcileOnConnect) {
+        await useStore.getState().reconcileOnConnect()
+      } else if (hadData) {
+        await pushState()
+      } else {
+        await pullState()
+      }
+      if (hadData) { toast(t('Profile created — data moved into it')) }
+      else { toast(t('Welcome, {0}', u.name)) }
     } catch (e) { if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast(e.message || t('Registration failed')) }
   }
   return <>
@@ -378,6 +391,7 @@ export function ServerSection({ toast }) {
       const res = await verifyServer(url)
       if (res.ok) {
         if (res.removed) {
+          await (useStore.getState().disconnectServer ? useStore.getState().disconnectServer() : clearServerConfig())
           setUrl('')
           setSavedUrl('')
           toast(t('Server removed — keeping local data only'))
@@ -395,8 +409,8 @@ export function ServerSection({ toast }) {
     }
   }
 
-  const handleClear = () => {
-    clearServerConfig()
+  const handleClear = async () => {
+    await (useStore.getState().disconnectServer ? useStore.getState().disconnectServer() : clearServerConfig())
     setUrl('')
     setSavedUrl('')
     setError('')

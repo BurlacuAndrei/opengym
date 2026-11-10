@@ -836,4 +836,309 @@ describe('useStore', () => {
       expect(useUI.getState().sheets.length).toBe(0)
     })
   })
+
+  describe('reconciliation matrix on connect (#21)', () => {
+    it('both sides have data -> creates pre-connection backup first, then opens openConflictDialog', async () => {
+      const { useUI } = await import('./useUI.js')
+      useUI.getState().closeAll()
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u1', name: 'User 1' })
+      store.update(s => {
+        s.workouts = [{ id: 'phone-w1', name: 'Phone Leg Day' }]
+      }, false)
+
+      const serverState = {
+        _ts: 77777,
+        workouts: [{ id: 'server-w1', name: 'Server Chest Day' }]
+      }
+
+      await store.reconcileOnConnect(serverState)
+
+      // 1. Pre-connection backup must exist in storage before any overwrite
+      const latestBackupRaw = storage.getItem('gym_backup_latest')
+      expect(latestBackupRaw).toBeTruthy()
+      const backup = JSON.parse(latestBackupRaw)
+      expect(backup.state.workouts).toEqual([{ id: 'phone-w1', name: 'Phone Leg Day' }])
+
+      // 2. Conflict dialog must be open
+      const sheets = useUI.getState().sheets
+      expect(sheets.length).toBe(1)
+      expect(sheets[0].kind).toBe('center')
+      const element = sheets[0].render(() => {})
+      expect(element.props.serverState).toEqual(serverState)
+
+      // 3. Local state was NOT prematurely overwritten
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'phone-w1', name: 'Phone Leg Day' }])
+
+      // 4. Choosing "server" applies server state and updates sync ts
+      await store.resolveConflict('server', serverState)
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'server-w1', name: 'Server Chest Day' }])
+      expect(storage.getItem('gym_last_synced_ts')).toBe('77777')
+    })
+
+    it('only server has data -> pulls server state automatically without conflict dialog', async () => {
+      const { useUI } = await import('./useUI.js')
+      useUI.getState().closeAll()
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u1', name: 'User 1' })
+      // Phone is empty (default DEF has empty workouts, routines, bodyweight)
+      expect(store.S.workouts.length).toBe(0)
+
+      const serverState = {
+        _ts: 66666,
+        workouts: [{ id: 'srv-w1', name: 'Server Routine' }]
+      }
+
+      await store.reconcileOnConnect(serverState)
+
+      // Automatically pulled server state
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'srv-w1', name: 'Server Routine' }])
+      expect(storage.getItem('gym_last_synced_ts')).toBe('66666')
+
+      // No conflict dialog opened
+      expect(useUI.getState().sheets.length).toBe(0)
+    })
+
+    it('only phone has data -> pushes phone state to server automatically without conflict dialog', async () => {
+      const { useUI } = await import('./useUI.js')
+      useUI.getState().closeAll()
+
+      const transport = vi.fn().mockResolvedValue({ ok: true, ts: 55555 })
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u1', name: 'User 1' })
+      store.update(s => {
+        s.workouts = [{ id: 'phone-only-w', name: 'Phone Only' }]
+      }, false)
+
+      await store.reconcileOnConnect(null)
+
+      // Automatically pushed phone state
+      expect(transport).toHaveBeenCalledWith('/api/data', {
+        method: 'PUT',
+        body: JSON.stringify({ state: useStore.getState().S })
+      })
+      expect(storage.getItem('gym_last_synced_ts')).toBe('55555')
+
+      // No conflict dialog opened
+      expect(useUI.getState().sheets.length).toBe(0)
+    })
+
+    it('neither side has data -> clean no-op', async () => {
+      const { useUI } = await import('./useUI.js')
+      useUI.getState().closeAll()
+
+      const transport = vi.fn()
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u1', name: 'User 1' })
+
+      await store.reconcileOnConnect({ workouts: [], routines: [], bodyweight: [] })
+
+      expect(transport).not.toHaveBeenCalledWith('/api/data', expect.objectContaining({ method: 'PUT' }))
+      expect(useUI.getState().sheets.length).toBe(0)
+    })
+
+    it('reconcileOnConnect fetches /api/data when no argument passed and handles offline gracefully', async () => {
+      const transport = vi.fn().mockRejectedValue(new Error('Network error'))
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u1' })
+      store.update(s => { s.workouts = [{ id: 'offline-w' }] }, false)
+
+      await expect(store.reconcileOnConnect()).resolves.toBeUndefined()
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'offline-w' }])
+    })
+  })
+
+  describe('server-mode push sync with offline cache and native file mirror (#22)', () => {
+    it('debounced push sends baseTs and updates gym_last_synced_ts', async () => {
+      const transport = vi.fn().mockResolvedValue({ ok: true, ts: 123456 })
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u-sync' })
+      storage.setItem('gym_last_synced_ts', '111111')
+
+      store.update(s => {
+        s.workouts = [{ id: 'debounced-w' }]
+      }, false)
+
+      await store.pushState()
+
+      expect(transport).toHaveBeenCalledWith('/api/data', {
+        method: 'PUT',
+        body: JSON.stringify({ state: useStore.getState().S, baseTs: 111111 })
+      })
+      expect(storage.getItem('gym_last_synced_ts')).toBe('123456')
+      expect(storage.getItem('gym_dirty')).toBeNull()
+    })
+
+    it('native file mirror (nativeSave) is written on mobile in server mode', async () => {
+      mockMobile = true
+      const transport = vi.fn().mockResolvedValue({ ok: true, ts: 222222 })
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u-mobile' })
+
+      store.update(s => {
+        s.workouts = [{ id: 'mobile-w1' }]
+      }, false)
+
+      await store.pushState()
+
+      expect(mockNativeSave).toHaveBeenCalledWith(useStore.getState().S)
+    })
+
+    it('offline marks dirty and preserves native file mirror', async () => {
+      mockMobile = true
+      const transport = vi.fn().mockRejectedValue(new Error('Connection failed'))
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u-mobile-offline' })
+
+      store.update(s => {
+        s.workouts = [{ id: 'offline-cached-w' }]
+      }, false)
+
+      await store.pushState()
+
+      expect(storage.getItem('gym_dirty')).toBe('1')
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'offline-cached-w' }])
+    })
+
+    it('409 conflict during push sync opens choice dialog', async () => {
+      const { useUI } = await import('./useUI.js')
+      useUI.getState().closeAll()
+
+      const serverState = { _ts: 999999, workouts: [{ id: 'srv-conflict' }] }
+      const err = new Error('conflict')
+      err.status = 409
+      err.serverState = serverState
+      setTransport(vi.fn().mockRejectedValue(err))
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u-conflict' })
+
+      await store.pushState()
+
+      expect(storage.getItem('gym_dirty')).toBe('1')
+      const sheets = useUI.getState().sheets
+      expect(sheets.length).toBe(1)
+      expect(sheets[0].kind).toBe('center')
+      const element = sheets[0].render(() => {})
+      expect(element.props.serverState).toEqual(serverState)
+    })
+
+    it('active workout stays device-local during server pull, resolve, and sync', async () => {
+      const activeSession = { exId: 'bench-press', setIdx: 2, reps: 8, weight: 100 }
+      const store = useStore.getState()
+      store.setUser({ id: 'u-active' })
+      store.update(s => {
+        s.active = activeSession
+        s.workouts = [{ id: 'local-old' }]
+      }, false)
+      const localTs = useStore.getState().S._ts || Date.now()
+
+      // 1. Pulling server state preserves local active session
+      const serverState = {
+        _ts: localTs + 1000,
+        workouts: [{ id: 'server-pulled' }],
+        active: null
+      }
+      await store.pullState(serverState)
+      expect(useStore.getState().S.active).toEqual(activeSession)
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'server-pulled' }])
+
+      // 2. Conflict resolution choosing 'server' preserves local active session
+      const anotherServerState = {
+        _ts: localTs + 2000,
+        workouts: [{ id: 'server-resolved' }],
+        active: null
+      }
+      await store.resolveConflict('server', anotherServerState)
+      expect(useStore.getState().S.active).toEqual(activeSession)
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'server-resolved' }])
+    })
+  })
+
+  describe('disconnect keeping data locally (#27)', () => {
+    it('disconnectServer clears token, clears server config, and returns to local-only guest mode', async () => {
+      const { setToken, getToken } = await import('../lib/token-storage.js')
+      const { saveServerConfig, getServerUrl } = await import('../lib/server-config.js')
+
+      await setToken('secret-session-token')
+      saveServerConfig({ url: 'https://gym.example.com', rpId: 'gym.example.com' })
+      storage.setItem('gym_guest', '0')
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u-disconnect', name: 'Disconnect User' })
+      expect(useStore.getState().user).toBeTruthy()
+      expect(await getToken()).toBe('secret-session-token')
+      expect(getServerUrl()).toBe('https://gym.example.com')
+
+      await store.disconnectServer()
+
+      // Token cleared
+      expect(await getToken()).toBeNull()
+      // Server config cleared
+      expect(getServerUrl()).toBe('')
+      // User is null
+      expect(useStore.getState().user).toBeNull()
+      // Returned to local-only guest mode
+      expect(useStore.getState().isGuest()).toBe(true)
+      expect(storage.getItem('gym_guest')).toBe('1')
+    })
+
+    it('disconnectServer keeps local data and native file mirror intact', async () => {
+      mockMobile = true
+      const store = useStore.getState()
+      store.setUser({ id: 'u-disconnect-data' })
+      store.update(s => {
+        s.workouts = [{ id: 'stay-local-1', name: 'Keep this workout' }]
+        s.routines = [{ id: 'r-keep', name: 'My Routine' }]
+      }, false)
+
+      await store.disconnectServer()
+
+      // Local state is intact
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'stay-local-1', name: 'Keep this workout' }])
+      expect(useStore.getState().S.routines).toEqual([{ id: 'r-keep', name: 'My Routine' }])
+
+      // LocalStorage key is NOT removed (unlike signOut)
+      expect(storage.getItem('gym_state_v1')).toBeTruthy()
+
+      // Native file mirror was saved with the local state
+      expect(mockNativeSave).toHaveBeenCalledWith(useStore.getState().S)
+    })
+
+    it('disconnectServer preserves pre-connection backup', async () => {
+      const { createLocalBackup } = await import('../lib/backup.js')
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u-disconnect-backup' })
+      store.update(s => {
+        s.workouts = [{ id: 'pre-conn-w', name: 'Pre-connection workout' }]
+      }, false)
+
+      const backup = createLocalBackup(useStore.getState().S, 1700000000000)
+      expect(storage.getItem('gym_backup_latest')).toBeTruthy()
+      expect(storage.getItem(backup.key)).toBeTruthy()
+
+      await store.disconnectServer()
+
+      // Pre-connection backup remains intact
+      expect(storage.getItem('gym_backup_latest')).toBeTruthy()
+      expect(storage.getItem(backup.key)).toBeTruthy()
+      const savedBackup = JSON.parse(storage.getItem(backup.key))
+      expect(savedBackup.state.workouts).toEqual([{ id: 'pre-conn-w', name: 'Pre-connection workout' }])
+    })
+  })
 })

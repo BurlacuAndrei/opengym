@@ -31,8 +31,16 @@ export function RegisterSheet({ close }) {
     try {
       const u = await passkeyRegister(n, code.trim())
       setUser(u); close()
-      if (hasData(useStore.getState().S)) { await pushState(); useUI.getState().toast(t('Profile created — data from this device moved into it')) }
-      else { await pullState(); useUI.getState().toast(t('Welcome, {0}', u.name)) }
+      const hadData = hasData(useStore.getState().S)
+      if (useStore.getState().reconcileOnConnect) {
+        await useStore.getState().reconcileOnConnect()
+      } else if (hadData) {
+        await pushState()
+      } else {
+        await pullState()
+      }
+      if (hadData) { useUI.getState().toast(t('Profile created — data from this device moved into it')) }
+      else { useUI.getState().toast(t('Welcome, {0}', u.name)) }
     } catch (e) {
       const isCancel = e.name === 'NotAllowedError' || e.name === 'AbortError' || e.message === 'USER_CANCELLED' || e.code === 'USER_CANCELLED' || e?.message?.includes?.('USER_CANCELLED')
       if (!isCancel) useUI.getState().toast(e.message || t('Registration failed'))
@@ -54,9 +62,14 @@ export function RegisterSheet({ close }) {
 }
 
 export default function Login() {
-  const { setUser, pullState, setGuest } = useStore()
+  const { setUser, pullState, setGuest, reconcileOnConnect } = useStore()
   const signIn = async () => {
-    try { const u = await passkeyLogin(); setUser(u); await pullState(); useUI.getState().toast(t('Welcome back, {0}', u.name)) }
+    try {
+      const u = await passkeyLogin()
+      setUser(u)
+      await (reconcileOnConnect ? reconcileOnConnect() : pullState())
+      useUI.getState().toast(t('Welcome back, {0}', u.name))
+    }
     catch (e) {
       const isCancel = e.name === 'NotAllowedError' || e.name === 'AbortError' || e.message === 'USER_CANCELLED' || e.code === 'USER_CANCELLED' || e?.message?.includes?.('USER_CANCELLED')
       if (!isCancel) useUI.getState().toast(e.message || t('Sign-in failed'))

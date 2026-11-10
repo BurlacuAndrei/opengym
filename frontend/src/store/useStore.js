@@ -6,7 +6,7 @@ import { DEMO, DEMO_SEEDED } from '../lib/demo.js'
 import { MOBILE, nativeLoad, nativeSave, syncReminder } from '../lib/mobile.js'
 import { createLocalBackup } from '../lib/backup.js'
 import { openConflictDialog } from '../components/ConflictDialog.jsx'
-import { getServerUrl } from '../lib/server-config.js'
+import { getServerUrl, clearServerConfig } from '../lib/server-config.js'
 import { clearToken } from '../lib/token-storage.js'
 
 const KEY = 'gym_state_v1'
@@ -35,7 +35,7 @@ function loadState() {
   return clone(DEF)
 }
 
-const hasData = st => !!((st.workouts || []).length || (st.routines || []).length || (st.bodyweight || []).length)
+const hasData = st => !!(st && ((st.workouts || []).length || (st.routines || []).length || (st.bodyweight || []).length))
 
 export const useStore = create((set, get) => {
   let pushTm = null
@@ -128,16 +128,17 @@ export const useStore = create((set, get) => {
         const res = await api('/api/data', { method: 'PUT', body: JSON.stringify(body) })
         localStorage.setItem('gym_last_synced_ts', String(res?.ts || get().S._ts || ''))
         localStorage.removeItem('gym_dirty')
+        if (MOBILE) nativeSave(get().S)
       } catch (e) {
         localStorage.setItem('gym_dirty', '1')
-        if (e.status === 409) {
+        if (e.status === 409 || e.statusCode === 409) {
           openConflictDialog({ serverState: e.serverState || e.state || e.data?.state || e.data?.serverState })
         }
       }
     },
-    async pullState() {
+    async pullState(prefetchedState) {
       try {
-        const { state } = await api('/api/data')
+        const state = prefetchedState !== undefined ? prefetchedState : (await api('/api/data'))?.state
         const S = get().S
         const dirty = localStorage.getItem('gym_dirty') === '1'
         if (state && dirty && (state._ts || 0) > (S._ts || 0)) {
@@ -152,6 +153,44 @@ export const useStore = create((set, get) => {
       } catch (e) { /* offline — keep local */ }
     },
 
+    async reconcileOnConnect(serverData) {
+      let serverState = serverData
+      if (serverState === undefined) {
+        try {
+          const res = await api('/api/data')
+          serverState = res?.state ?? null
+        } catch (e) {
+          return
+        }
+      }
+
+      const S = get().S
+      const phoneHasData = hasData(S)
+      const serverHasData = hasData(serverState)
+
+      if (phoneHasData && serverHasData) {
+        createLocalBackup(S)
+        openConflictDialog({ serverState })
+      } else if (!phoneHasData && serverHasData) {
+        await get().pullState(serverState)
+      } else if (phoneHasData && !serverHasData) {
+        await get().pushState()
+      }
+    },
+
+    async disconnectServer() {
+      clearTimeout(pushTm)
+      await clearToken().catch(() => {})
+      clearServerConfig()
+      get().setUser(null)
+      get().setGuest(true)
+      localStorage.removeItem('gym_dirty')
+      localStorage.removeItem('gym_last_synced_ts')
+      if (MOBILE) {
+        nativeSave(get().S)
+      }
+    },
+
     async resolveConflict(choice, serverState) {
       const c = (choice || '').toLowerCase()
       if (c === 'server') {
@@ -159,7 +198,7 @@ export const useStore = create((set, get) => {
         if (serverState) {
           const active = get().S?.active
           const next = Object.assign(clone(DEF), serverState)
-          if (active && !next.active) next.active = active
+          if (active) next.active = active
           get().replaceState(next, false)
           if (serverState._ts) localStorage.setItem('gym_last_synced_ts', String(serverState._ts))
         }
@@ -248,3 +287,5 @@ export const useStore = create((set, get) => {
 
 export { hasData }
 export const resolveConflict = (choice, serverState) => useStore.getState().resolveConflict(choice, serverState)
+export const reconcileOnConnect = (serverState) => useStore.getState().reconcileOnConnect(serverState)
+export const disconnectServer = () => useStore.getState().disconnectServer()
