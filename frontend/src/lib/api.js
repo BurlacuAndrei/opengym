@@ -93,10 +93,46 @@ function credToJSON(cred) {
   }
   return out
 }
-export async function passkeyRegister(name, code) {
+export async function passkeyRegister(name, codeOrOpts = '', maybeOpts = {}) {
+  const code = typeof codeOrOpts === 'string' ? codeOrOpts : ''
+  const opts = typeof codeOrOpts === 'object' && codeOrOpts !== null ? codeOrOpts : maybeOpts
   const { cid, options } = await api('/api/register/options', { method: 'POST', body: JSON.stringify({ name, code: code || '' }) })
-  const cred = await navigator.credentials.create({ publicKey: toCreationOptions(options) })
-  const res = await api('/api/register/verify', { method: 'POST', body: JSON.stringify({ cid, credential: credToJSON(cred) }) })
+  const isAndroidServer = opts.isAndroidServer ?? isServerModeAndroid()
+  let cred
+  if (isAndroidServer) {
+    const plugin = opts.nativePasskey || NativePasskey
+    let passkeyRes
+    try {
+      passkeyRes = await plugin.register({ options })
+    } catch (err) {
+      if (err?.message === 'USER_CANCELLED' || err?.code === 'USER_CANCELLED' || String(err?.message || err).includes('USER_CANCELLED')) {
+        const cancelErr = new Error('USER_CANCELLED')
+        cancelErr.name = 'AbortError'
+        cancelErr.code = 'USER_CANCELLED'
+        throw cancelErr
+      }
+      throw err
+    }
+    cred = passkeyRes?.credential || passkeyRes
+  } else {
+    cred = credToJSON(await navigator.credentials.create({ publicKey: toCreationOptions(options) }))
+  }
+  const body = isAndroidServer ? { cid, credential: cred, native: true } : { cid, credential: cred }
+  const res = await api('/api/register/verify', { method: 'POST', body: JSON.stringify(body) })
+  if (res.token) {
+    await (opts.setToken || setToken)(res.token)
+  }
+  if (res.user) {
+    try {
+      const { useStore } = await import('../store/useStore.js')
+      useStore.getState().setUser(res.user)
+    } catch {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('gym_user', JSON.stringify(res.user))
+        localStorage.removeItem('gym_guest')
+      }
+    }
+  }
   return res.user
 }
 export async function passkeyLogin(opts = {}) {

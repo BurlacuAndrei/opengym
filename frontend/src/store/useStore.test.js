@@ -550,6 +550,118 @@ describe('useStore', () => {
 
       expect(toastSpy).not.toHaveBeenCalled()
     })
+
+    it('uses NativePasskey.register, passes native:true to verify, stores token via setToken, sets user and unsets guest on registration', async () => {
+      mockMobile = true
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 14; Pixel 8)')
+      storage.setItem('gym_server_config', JSON.stringify({ url: 'https://gym.example.com' }))
+      storage.setItem('gym_guest', '1')
+
+      const { passkeyRegister, NativePasskey } = await import('../lib/api.js')
+      const { getToken } = await import('../lib/token-storage.js')
+
+      const mockNativeRegister = vi.fn().mockResolvedValue({
+        credential: { id: 'native-reg-id', rawId: 'cmVnMQ' }
+      })
+      NativePasskey.register = mockNativeRegister
+
+      const transportCalls = []
+      const transport = vi.fn().mockImplementation(async (path, opts) => {
+        transportCalls.push({ path, body: opts?.body ? JSON.parse(opts.body) : null })
+        if (path === '/api/register/options') {
+          return { cid: 'cid-android-reg-1', options: { challenge: 'reg-challenge' } }
+        }
+        if (path === '/api/register/verify') {
+          return {
+            user: { id: 'u-reg-1', name: 'New Lifter' },
+            token: 'jwt-reg-token'
+          }
+        }
+        return {}
+      })
+      setTransport(transport)
+
+      const user = await passkeyRegister('New Lifter', 'INVITE123')
+
+      expect(mockNativeRegister).toHaveBeenCalledWith({
+        options: { challenge: 'reg-challenge' }
+      })
+      expect(transportCalls).toContainEqual({
+        path: '/api/register/options',
+        body: {
+          name: 'New Lifter',
+          code: 'INVITE123'
+        }
+      })
+      expect(transportCalls).toContainEqual({
+        path: '/api/register/verify',
+        body: {
+          cid: 'cid-android-reg-1',
+          credential: { id: 'native-reg-id', rawId: 'cmVnMQ' },
+          native: true
+        }
+      })
+      expect(user).toEqual({ id: 'u-reg-1', name: 'New Lifter' })
+      expect(await getToken()).toBe('jwt-reg-token')
+      expect(useStore.getState().user).toEqual({ id: 'u-reg-1', name: 'New Lifter' })
+      expect(useStore.getState().isGuest()).toBe(false)
+      expect(storage.getItem('gym_guest')).toBeNull()
+      expect(JSON.parse(storage.getItem('gym_user'))).toEqual({ id: 'u-reg-1', name: 'New Lifter' })
+    })
+
+    it('rejects invalid invite code with server error and surfaces error on registration failure', async () => {
+      mockMobile = true
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 14; Pixel 8)')
+      storage.setItem('gym_server_config', JSON.stringify({ url: 'https://gym.example.com' }))
+      storage.setItem('gym_guest', '1')
+
+      const { passkeyRegister, NativePasskey } = await import('../lib/api.js')
+      const { getToken } = await import('../lib/token-storage.js')
+      const { useUI } = await import('./useUI.js')
+
+      NativePasskey.register = vi.fn()
+
+      const serverErr = new Error('a valid invite code is required')
+      serverErr.status = 403
+      const transport = vi.fn().mockImplementation(async (path) => {
+        if (path === '/api/register/options') {
+          throw serverErr
+        }
+        return {}
+      })
+      setTransport(transport)
+
+      const toastSpy = vi.spyOn(useUI.getState(), 'toast')
+
+      await expect(passkeyRegister('New Lifter', 'BADCODE')).rejects.toThrow('a valid invite code is required')
+      expect(NativePasskey.register).not.toHaveBeenCalled()
+      expect(await getToken()).toBeNull()
+      expect(useStore.getState().user).toBeNull()
+      expect(useStore.getState().isGuest()).toBe(true)
+      expect(storage.getItem('gym_guest')).toBe('1')
+
+      try {
+        await passkeyRegister('New Lifter', 'BADCODE')
+      } catch (e) {
+        const isCancel = e.name === 'NotAllowedError' || e.name === 'AbortError' || e.message === 'USER_CANCELLED' || e.code === 'USER_CANCELLED' || e?.message?.includes?.('USER_CANCELLED')
+        if (!isCancel) useUI.getState().toast(e.message || 'Registration failed')
+      }
+      expect(toastSpy).toHaveBeenCalledWith('a valid invite code is required')
+    })
+
+    it('shows invite code field only when config.invite_only is true in RegisterSheet', async () => {
+      const React = (await import('react')).default
+      const { renderToStaticMarkup } = await import('react-dom/server')
+      const { RegisterSheet } = await import('../views/Login.jsx')
+
+      useStore.setState({ config: { invite_only: true } })
+      const htmlTrue = renderToStaticMarkup(React.createElement(RegisterSheet, { close: () => {} }))
+      expect(htmlTrue).toContain('Invite code')
+
+      useStore.setState({ config: { invite_only: false } })
+      const htmlFalse = renderToStaticMarkup(React.createElement(RegisterSheet, { close: () => {} }))
+      expect(htmlFalse).not.toContain('Invite code')
+    })
   })
 
   describe('web boot flow', () => {

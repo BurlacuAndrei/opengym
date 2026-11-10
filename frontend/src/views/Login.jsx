@@ -8,14 +8,22 @@ import { useState, useRef, useEffect } from 'react'
 import Icon from '../components/Icon.jsx'
 import { Button } from '../components/ui.jsx'
 
-function RegisterSheet({ close }) {
+export function RegisterSheet({ close }) {
   const { setUser, pushState, pullState } = useStore()
+  const storeConfig = useStore(s => s.config) ?? useStore.getState().config
   const [name, setName] = useState('')
   const [code, setCode] = useState('')
-  const [inviteOnly, setInviteOnly] = useState(false)
+  const [serverInviteOnly, setServerInviteOnly] = useState(null)
   const ref = useRef(null)
   useEffect(() => { setTimeout(() => ref.current?.focus(), 250) }, [])
-  useEffect(() => { api('/api/config').then(c => setInviteOnly(!!c.invite_only)).catch(() => {}) }, [])
+  useEffect(() => {
+    if (storeConfig?.invite_only == null) {
+      api('/api/config').then(c => {
+        if (c?.invite_only != null) setServerInviteOnly(Boolean(c.invite_only))
+      }).catch(() => {})
+    }
+  }, [storeConfig])
+  const inviteOnly = Boolean(storeConfig?.invite_only ?? serverInviteOnly)
   const go = async () => {
     const n = name.trim()
     if (!n) { useUI.getState().toast(t('Enter a name')); return }
