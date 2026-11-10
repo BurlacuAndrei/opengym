@@ -41,6 +41,12 @@ export function makeSessionCookie(user, secret, days = 90) {
   return `gymsid=${makeSessionToken(user, secret, days)}`;
 }
 
+export function certFingerprintToApkOrigin(fingerprint) {
+  const cleanHex = fingerprint.trim().replace(/:/g, '').toLowerCase();
+  const b64u = Buffer.from(cleanHex, 'hex').toString('base64url');
+  return `android:apk-key-hash:${b64u}`;
+}
+
 export async function spawnServer(options = {}) {
   const port = options.port ?? (await getFreePort());
   let dataDir = options.dataDir;
