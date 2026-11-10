@@ -32,18 +32,11 @@ import CoachProposal from './views/CoachProposal.jsx'
 bindUI(useUI)   // lets the shared controls open sheets without importing the store at module scope
 
 export function SessionExpiredBanner({ onSignIn }) {
-  const { setUser, pullState, reconcileOnConnect } = useStore()
   const handleReauth = async () => {
     if (onSignIn) { await onSignIn(); return }
     try {
       const u = await passkeyLogin()
-      setUser(u)
-      useStore.setState({ sessionExpired: false, reAuthNeeded: false })
-      if (reconcileOnConnect) {
-        await reconcileOnConnect()
-      } else {
-        await pullState()
-      }
+      await useStore.getState().handleReauth(u)
       useUI.getState().toast(t('Welcome back, {0}', u.name))
     } catch (e) {
       const isCancel = e.name === 'NotAllowedError' || e.name === 'AbortError' || e.message === 'USER_CANCELLED' || e.code === 'USER_CANCELLED' || e?.message?.includes?.('USER_CANCELLED')

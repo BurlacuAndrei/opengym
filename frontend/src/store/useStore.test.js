@@ -1494,4 +1494,153 @@ describe('useStore', () => {
       expect(html).toContain('Sign in')
     })
   })
+
+  describe('re-authentication on session-expired (#25, #26)', () => {
+    it('same profile id (#25): pushes pending edits with baseTs when dirty, clears banner and updates synced ts', async () => {
+      const store = useStore.getState()
+      store.setUser({ id: 'u1', name: 'User 1' })
+      store.update(s => {
+        s.workouts = [{ id: 'w-dirty-reauth', name: 'Reauth Workout' }]
+      }, false)
+
+      storage.setItem('gym_dirty', '1')
+      storage.setItem('gym_last_synced_ts', '500')
+      useStore.setState({ sessionExpired: true, reAuthNeeded: true })
+
+      const transport = vi.fn().mockResolvedValue({ ok: true, ts: 600 })
+      setTransport(transport)
+
+      await store.handleReauth({ id: 'u1', name: 'User 1' })
+
+      expect(useStore.getState().sessionExpired).toBe(false)
+      expect(useStore.getState().reAuthNeeded).toBe(false)
+      expect(transport).toHaveBeenCalledWith('/api/data', {
+        method: 'PUT',
+        body: JSON.stringify({ state: useStore.getState().S, baseTs: 500 })
+      })
+      expect(storage.getItem('gym_dirty')).toBeNull()
+      expect(storage.getItem('gym_last_synced_ts')).toBe('600')
+    })
+
+    it('same profile id (#25): handles 409 conflict during dirty push by opening choice dialog', async () => {
+      const { useUI } = await import('./useUI.js')
+      useUI.getState().closeAll()
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u1', name: 'User 1' })
+      store.update(s => {
+        s.workouts = [{ id: 'w-dirty-409', name: 'Conflict Workout' }]
+      }, false)
+
+      storage.setItem('gym_dirty', '1')
+      storage.setItem('gym_last_synced_ts', '500')
+      useStore.setState({ sessionExpired: true, reAuthNeeded: true })
+
+      const serverState = { _ts: 888, workouts: [{ id: 'srv-w-conflict' }] }
+      const err = new Error('conflict')
+      err.status = 409
+      err.serverState = serverState
+      const transport = vi.fn().mockRejectedValue(err)
+      setTransport(transport)
+
+      await store.handleReauth({ id: 'u1', name: 'User 1' })
+
+      expect(useStore.getState().sessionExpired).toBe(false)
+      expect(useUI.getState().sheets.length).toBe(1)
+      expect(useUI.getState().sheets[0].kind).toBe('center')
+      const element = useUI.getState().sheets[0].render()
+      expect(element.props.serverState).toEqual(serverState)
+    })
+
+    it('same profile id (#25): clears sessionExpired banner without pushing if not dirty', async () => {
+      const store = useStore.getState()
+      store.setUser({ id: 'u1', name: 'User 1' })
+      storage.removeItem('gym_dirty')
+      useStore.setState({ sessionExpired: true, reAuthNeeded: true })
+
+      const transport = vi.fn()
+      setTransport(transport)
+
+      await store.handleReauth({ id: 'u1', name: 'User 1' })
+
+      expect(useStore.getState().sessionExpired).toBe(false)
+      expect(useStore.getState().reAuthNeeded).toBe(false)
+      expect(transport).not.toHaveBeenCalled()
+    })
+
+    it('different profile id (#26): backs up previous data, clears dirty flag & last synced ts, and runs reconcileOnConnect', async () => {
+      const { getLatestBackup } = await import('../lib/backup.js')
+      const { useUI } = await import('./useUI.js')
+      useUI.getState().closeAll()
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u1', name: 'User 1' })
+      store.update(s => {
+        s.workouts = [{ id: 'u1-chest', name: 'User 1 Chest' }]
+      }, false)
+
+      storage.setItem('gym_dirty', '1')
+      storage.setItem('gym_last_synced_ts', '1111')
+      useStore.setState({ sessionExpired: true, reAuthNeeded: true })
+
+      const u2ServerState = { _ts: 2222, workouts: [{ id: 'u2-back', name: 'User 2 Back' }] }
+      const transport = vi.fn().mockImplementation((path, opts) => {
+        if (opts?.method === 'PUT') return Promise.resolve({ ok: true })
+        return Promise.resolve({ state: u2ServerState })
+      })
+      setTransport(transport)
+
+      await store.handleReauth({ id: 'u2', name: 'User 2' })
+
+      // Backs up previous user data
+      const latestBackup = getLatestBackup()
+      expect(latestBackup).toBeTruthy()
+      expect(latestBackup.state.workouts).toEqual([{ id: 'u1-chest', name: 'User 1 Chest' }])
+
+      // Clears dirty flag and last synced ts so old data never pushes to new profile
+      expect(storage.getItem('gym_dirty')).toBeNull()
+      expect(storage.getItem('gym_last_synced_ts')).toBeNull()
+
+      // Never pushed old profile edits via PUT
+      expect(transport).not.toHaveBeenCalledWith('/api/data', expect.objectContaining({ method: 'PUT' }))
+
+      // User is updated to u2 and sessionExpired cleared
+      expect(useStore.getState().user).toEqual({ id: 'u2', name: 'User 2' })
+      expect(useStore.getState().sessionExpired).toBe(false)
+
+      // Reconciles with user 2 data (both sides have data -> opens conflict dialog)
+      expect(useUI.getState().sheets.length).toBe(1)
+      expect(useUI.getState().sheets[0].kind).toBe('center')
+      const element = useUI.getState().sheets[0].render()
+      expect(element.props.serverState).toEqual(u2ServerState)
+    })
+
+    it('SessionExpiredBanner wires handleReauth on passkey login', async () => {
+      const React = (await import('react')).default
+      const { SessionExpiredBanner } = await import('../App.jsx')
+      const { useUI } = await import('./useUI.js')
+      const apiModule = await import('../lib/api.js')
+
+      const prevUser = { id: 'u1', name: 'User 1' }
+      useStore.setState({ sessionExpired: true, reAuthNeeded: true, user: prevUser })
+
+      const spyHandleReauth = vi.spyOn(useStore.getState(), 'handleReauth').mockResolvedValue()
+      const spyPasskeyLogin = vi.spyOn(apiModule, 'passkeyLogin').mockResolvedValue({ id: 'u1', name: 'User 1' })
+      const toastSpy = vi.spyOn(useUI.getState(), 'toast')
+
+      const element = React.createElement(SessionExpiredBanner)
+      // The button onClick is the 2nd child in SessionExpiredBanner
+      const tree = element.type(element.props)
+      const button = tree.props.children[1]
+      await button.props.onClick()
+
+      expect(spyPasskeyLogin).toHaveBeenCalled()
+      expect(spyHandleReauth).toHaveBeenCalledWith({ id: 'u1', name: 'User 1' })
+      expect(toastSpy).toHaveBeenCalledWith(expect.stringContaining('User 1'))
+
+      spyHandleReauth.mockRestore()
+      spyPasskeyLogin.mockRestore()
+      toastSpy.mockRestore()
+    })
+  })
 })

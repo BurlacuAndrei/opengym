@@ -253,6 +253,25 @@ export const useStore = create((set, get) => {
       }
     },
 
+    async handleReauth(newUser, serverData) {
+      const prevUser = get().user
+      const isSame = Boolean(prevUser?.id && newUser?.id && prevUser.id === newUser.id)
+
+      if (isSame) {
+        get().setUser(newUser)
+        const dirty = localStorage.getItem('gym_dirty') === '1'
+        if (dirty) {
+          await get().pushState()
+        }
+      } else {
+        createLocalBackup(get().S)
+        localStorage.removeItem('gym_dirty')
+        localStorage.removeItem('gym_last_synced_ts')
+        get().setUser(newUser)
+        await get().reconcileOnConnect(serverData)
+      }
+    },
+
     async disconnectServer(opts = {}) {
       const removeData = typeof opts === 'boolean' ? opts : Boolean(opts?.removeData)
       clearTimeout(pushTm)
@@ -370,3 +389,4 @@ export const resolveConflict = (choice, serverState) => useStore.getState().reso
 export const reconcileOnConnect = (serverState) => useStore.getState().reconcileOnConnect(serverState)
 export const reconcileOnRegister = (choice, serverState) => useStore.getState().reconcileOnRegister(choice, serverState)
 export const disconnectServer = (opts) => useStore.getState().disconnectServer(opts)
+export const handleReauth = (newUser, serverData) => useStore.getState().handleReauth(newUser, serverData)
