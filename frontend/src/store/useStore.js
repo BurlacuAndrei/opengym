@@ -60,19 +60,21 @@ export const useStore = create((set, get) => {
   // (e.g. setting the reminder time then immediately backgrounding to test it). On mobile the
   // same applies to the file mirror — backgrounding is often the last thing before the OS
   // kills the app.
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'hidden') return
-    if (MOBILE && saveTm) {
-      clearTimeout(saveTm)
-      saveTm = null
-      nativeSave(get().S)
-    }
-    if (pushTm) {
-      clearTimeout(pushTm)
-      pushTm = null
-      get().pushState()
-    }
-  })
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'hidden') return
+      if (MOBILE && saveTm) {
+        clearTimeout(saveTm)
+        saveTm = null
+        nativeSave(get().S)
+      }
+      if (pushTm) {
+        clearTimeout(pushTm)
+        pushTm = null
+        get().pushState()
+      }
+    })
+  }
 
   // Everything a sign-out leaves behind on this device, whichever way it was triggered.
   const clearLocalSession = () => {
