@@ -52,6 +52,20 @@ export function certFingerprintToApkOrigin(fingerprint) {
   return `android:apk-key-hash:${b64u}`;
 }
 
+export function isNativeClient(req, body) {
+  if (body?.native === true) return true;
+  if (req.headers['x-client-mode'] === 'native' || req.headers['x-opengym-native'] === '1') return true;
+  try {
+    const raw = body?.credential?.response?.clientDataJSON;
+    if (raw) {
+      const jsonStr = Buffer.from(raw, 'base64url').toString('utf8');
+      const parsed = JSON.parse(jsonStr);
+      if (typeof parsed.origin === 'string' && parsed.origin.startsWith('android:apk-key-hash:')) return true;
+    }
+  } catch {}
+  return false;
+}
+
 export function expectedOrigins() {
   if (!NATIVE_CONFIG) return ORIGIN;
   return [ORIGIN, ...NATIVE_CONFIG.rawHex.map(certFingerprintToApkOrigin)];
@@ -387,7 +401,12 @@ const routes = {
       transports: body.credential?.response?.transports || []
     });
     saveDb();
-    json(res, 200, { user: { id: user.id, name: user.name, admin: isAdmin(user) } }, { 'Set-Cookie': sessionCookie(user) });
+    const native = isNativeClient(req, body);
+    const respBody = {
+      user: { id: user.id, name: user.name, admin: isAdmin(user) },
+      ...(native ? { token: makeSession(user) } : {})
+    };
+    json(res, 200, respBody, { 'Set-Cookie': sessionCookie(user) });
   },
 
   'POST /api/login/options': async (req, res) => {
@@ -426,7 +445,12 @@ const routes = {
     const user = db.users.find(u => u.id === cred.userId);
     if (!user) return json(res, 500, { error: 'user missing' });
     if (user.disabled) return json(res, 403, { error: 'this account has been disabled' });
-    json(res, 200, { user: { id: user.id, name: user.name, admin: isAdmin(user) } }, { 'Set-Cookie': sessionCookie(user) });
+    const native = isNativeClient(req, body);
+    const respBody = {
+      user: { id: user.id, name: user.name, admin: isAdmin(user) },
+      ...(native ? { token: makeSession(user) } : {})
+    };
+    json(res, 200, respBody, { 'Set-Cookie': sessionCookie(user) });
   },
 
   'POST /api/logout': async (req, res) => json(res, 200, { ok: true }, { 'Set-Cookie': clearCookie }),
@@ -465,7 +489,7 @@ const routes = {
       current = JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch { current = null; }
 
-    if (current && body.baseTs !== undefined && current._ts !== body.baseTs) {
+    if (current && (body.baseTs === undefined || current._ts !== body.baseTs)) {
       return json(res, 409, { error: 'conflict', state: current });
     }
 

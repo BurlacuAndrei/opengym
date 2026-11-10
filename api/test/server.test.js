@@ -2,7 +2,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test, { describe } from 'node:test';
-import { certFingerprintToApkOrigin, getFreePort, makeSessionCookie, spawnServer } from './harness.mjs';
+import {
+  certFingerprintToApkOrigin,
+  getFreePort,
+  isNativeClient,
+  makeSessionCookie,
+  spawnServer,
+} from './harness.mjs';
 
 describe('server test harness & baseline API', () => {
   test('free port allocation and clean SIGTERM shutdown', async () => {
@@ -121,7 +127,8 @@ describe('server test harness & baseline API', () => {
 
   test('PUT /api/data stale state write rejection with 409 (#4)', async () => {
     const user = { id: 'u_conflict_test', name: 'Conflict Lifter', sv: 0 };
-    const srv = await spawnServer({ users: [user] });
+    const freshUser = { id: 'u_fresh_lifter', name: 'Fresh Lifter', sv: 0 };
+    const srv = await spawnServer({ users: [user, freshUser] });
 
     try {
       const cookie = srv.cookieFor(user);
@@ -159,18 +166,29 @@ describe('server test harness & baseline API', () => {
       });
       assert.equal(matchingPut.status, 200);
 
-      // 4. Missing baseTs -> legacy write succeeds
-      const legacyPut = await srv.fetch('/api/data', {
+      // 4. Missing baseTs with existing stored state -> 409 (#7)
+      const missingBaseTsPut = await srv.fetch('/api/data', {
         method: 'PUT',
         headers: { Cookie: cookie, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ state: { _ts: 1002, name: 'Legacy' } }),
+        body: JSON.stringify({ state: { _ts: 1002, name: 'Missing baseTs' } }),
       });
-      assert.equal(legacyPut.status, 200);
+      assert.equal(missingBaseTsPut.status, 409);
+      const missingConflictData = await missingBaseTsPut.json();
+      assert.equal(missingConflictData.error, 'conflict');
+      assert.equal(missingConflictData.state.name, 'Updated');
 
-      const finalCheck = JSON.parse(
-        fs.readFileSync(path.join(srv.dataDir, `state-${user.id}.json`), 'utf8')
+      // 5. Missing baseTs with NO stored state -> succeeds (#7)
+      const freshCookie = srv.cookieFor(freshUser);
+      const freshPut = await srv.fetch('/api/data', {
+        method: 'PUT',
+        headers: { Cookie: freshCookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state: { _ts: 1003, name: 'First write' } }),
+      });
+      assert.equal(freshPut.status, 200);
+      const freshDisk = JSON.parse(
+        fs.readFileSync(path.join(srv.dataDir, `state-${freshUser.id}.json`), 'utf8')
       );
-      assert.equal(finalCheck.name, 'Legacy');
+      assert.equal(freshDisk.name, 'First write');
     } finally {
       await srv.stop();
     }
@@ -331,5 +349,37 @@ describe('server test harness & baseline API', () => {
     } finally {
       await srv.stop();
     }
+  });
+
+  test('isNativeClient detection rule and session token return (#12)', () => {
+    // 1. Web request without native indicators -> false
+    assert.equal(isNativeClient({ headers: {} }, {}), false);
+
+    // 2. Request with native: true flag in body -> true
+    assert.equal(isNativeClient({ headers: {} }, { native: true }), true);
+
+    // 3. Request with x-client-mode header -> true
+    assert.equal(isNativeClient({ headers: { 'x-client-mode': 'native' } }, {}), true);
+
+    // 4. Request with clientDataJSON having android:apk-key-hash origin -> true
+    const clientDataObj = {
+      type: 'webauthn.get',
+      challenge: 'abc',
+      origin: 'android:apk-key-hash:xyz123',
+    };
+    const b64clientData = Buffer.from(JSON.stringify(clientDataObj)).toString('base64url');
+    const reqWithApkOrigin = {
+      credential: { response: { clientDataJSON: b64clientData } },
+    };
+    assert.equal(isNativeClient({ headers: {} }, reqWithApkOrigin), true);
+
+    // 5. Request with web origin in clientDataJSON -> false
+    const webClientData = Buffer.from(
+      JSON.stringify({ type: 'webauthn.get', origin: 'https://opengym.app' })
+    ).toString('base64url');
+    assert.equal(
+      isNativeClient({ headers: {} }, { credential: { response: { clientDataJSON: webClientData } } }),
+      false
+    );
   });
 });
