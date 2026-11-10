@@ -1,5 +1,6 @@
 package ch.duartesantos.opengym
 
+import android.content.SharedPreferences
 import androidx.core.content.ContextCompat
 import androidx.credentials.CreateCredentialResponse
 import androidx.credentials.CreatePublicKeyCredentialRequest
@@ -15,14 +16,88 @@ import androidx.credentials.exceptions.CreateCredentialException
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.PluginMethod
+import org.json.JSONObject
 
 @CapacitorPlugin(name = "NativePasskey")
 class NativePasskeyPlugin : Plugin() {
+
+    private var encryptedPrefs: SharedPreferences? = null
+
+    @Synchronized
+    private fun getEncryptedPrefs(): SharedPreferences {
+        encryptedPrefs?.let { return it }
+        val ctx = context ?: activity?.applicationContext ?: throw IllegalStateException("Context unavailable")
+        val masterKey = MasterKey.Builder(ctx)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+
+        val prefs = EncryptedSharedPreferences.create(
+            ctx,
+            "opengym_secure_tokens",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+        encryptedPrefs = prefs
+        return prefs
+    }
+
+    @PluginMethod
+    fun setToken(call: PluginCall) {
+        val token = call.getString("token") ?: call.getString("value")
+        val key = call.getString("key") ?: "auth_token"
+        if (token == null) {
+            call.reject("Token is required", "INVALID_ARGUMENT")
+            return
+        }
+        try {
+            getEncryptedPrefs().edit().putString(key, token).apply()
+            val ret = JSObject()
+            ret.put("success", true)
+            call.resolve(ret)
+        } catch (e: Exception) {
+            call.reject("Failed to set token: ${e.message}", "STORAGE_ERROR", e)
+        }
+    }
+
+    @PluginMethod
+    fun getToken(call: PluginCall) {
+        val key = call.getString("key") ?: "auth_token"
+        try {
+            val token = getEncryptedPrefs().getString(key, null)
+            val ret = JSObject()
+            if (token != null) {
+                ret.put("token", token)
+                ret.put("value", token)
+            } else {
+                ret.put("token", JSONObject.NULL)
+                ret.put("value", JSONObject.NULL)
+            }
+            call.resolve(ret)
+        } catch (e: Exception) {
+            call.reject("Failed to get token: ${e.message}", "STORAGE_ERROR", e)
+        }
+    }
+
+    @PluginMethod
+    fun clearToken(call: PluginCall) {
+        val key = call.getString("key") ?: "auth_token"
+        try {
+            getEncryptedPrefs().edit().remove(key).apply()
+            val ret = JSObject()
+            ret.put("success", true)
+            call.resolve(ret)
+        } catch (e: Exception) {
+            call.reject("Failed to clear token: ${e.message}", "STORAGE_ERROR", e)
+        }
+    }
 
     @PluginMethod
     fun register(call: PluginCall) {
