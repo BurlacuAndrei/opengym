@@ -5,6 +5,7 @@ import { registerCustom } from '../lib/exercises.js'
 import { DEMO, DEMO_SEEDED } from '../lib/demo.js'
 import { MOBILE, nativeLoad, nativeSave, syncReminder } from '../lib/mobile.js'
 import { createLocalBackup } from '../lib/backup.js'
+import { openConflictDialog } from '../components/ConflictDialog.jsx'
 
 const KEY = 'gym_state_v1'
 export const DEF = {
@@ -82,6 +83,7 @@ export const useStore = create((set, get) => {
     get().setUser(null)
     localStorage.removeItem('gym_guest')
     localStorage.removeItem('gym_dirty')
+    localStorage.removeItem('gym_last_synced_ts')
     localStorage.removeItem(KEY)
     persist(clone(DEF), false)
   }
@@ -115,19 +117,34 @@ export const useStore = create((set, get) => {
     async pushState() {
       if (!get().user) return
       clearTimeout(pushTm)
-      try { await api('/api/data', { method: 'PUT', body: JSON.stringify({ state: get().S }) }); localStorage.removeItem('gym_dirty') }
-      catch (e) { localStorage.setItem('gym_dirty', '1') }
+      try {
+        const rawTs = localStorage.getItem('gym_last_synced_ts')
+        const baseTs = rawTs && !Number.isNaN(Number(rawTs)) ? Number(rawTs) : undefined
+        const body = { state: get().S }
+        if (baseTs !== undefined) body.baseTs = baseTs
+        const res = await api('/api/data', { method: 'PUT', body: JSON.stringify(body) })
+        localStorage.setItem('gym_last_synced_ts', String(res?.ts || get().S._ts || ''))
+        localStorage.removeItem('gym_dirty')
+      } catch (e) {
+        localStorage.setItem('gym_dirty', '1')
+        if (e.status === 409) {
+          openConflictDialog({ serverState: e.serverState || e.state || e.data?.state || e.data?.serverState })
+        }
+      }
     },
     async pullState() {
       try {
         const { state } = await api('/api/data')
         const S = get().S
         const dirty = localStorage.getItem('gym_dirty') === '1'
-        if (state && (!hasData(S) || ((state._ts || 0) >= (S._ts || 0) && !dirty))) {
+        if (state && dirty && (state._ts || 0) > (S._ts || 0)) {
+          openConflictDialog({ serverState: state })
+        } else if (state && (!hasData(S) || ((state._ts || 0) >= (S._ts || 0) && !dirty))) {
           const active = S.active
           const next = Object.assign(clone(DEF), state)
           if (active) next.active = active
           persist(next, false)
+          if (state._ts) localStorage.setItem('gym_last_synced_ts', String(state._ts))
         } else if (hasData(S)) { await get().pushState() }
       } catch (e) { /* offline — keep local */ }
     },
@@ -141,6 +158,7 @@ export const useStore = create((set, get) => {
           const next = Object.assign(clone(DEF), serverState)
           if (active && !next.active) next.active = active
           get().replaceState(next, false)
+          if (serverState._ts) localStorage.setItem('gym_last_synced_ts', String(serverState._ts))
         }
         localStorage.removeItem('gym_dirty')
       } else if (c === 'device') {

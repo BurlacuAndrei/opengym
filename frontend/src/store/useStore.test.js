@@ -52,6 +52,26 @@ describe('api transport seam', () => {
     expect(mockTransport).not.toHaveBeenCalled()
     fetchSpy.mockRestore()
   })
+
+  it('attaches error data and state on HTTP failure', async () => {
+    resetTransport()
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: 'conflict', state: { _ts: 123 } })
+    })
+    try {
+      await api('/api/data', { method: 'PUT' })
+      expect.fail('should throw')
+    } catch (e) {
+      expect(e.status).toBe(409)
+      expect(e.data).toEqual({ error: 'conflict', state: { _ts: 123 } })
+      expect(e.state).toEqual({ _ts: 123 })
+      expect(e.serverState).toEqual({ _ts: 123 })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
 })
 
 describe('useStore', () => {
@@ -131,6 +151,7 @@ describe('useStore', () => {
       expect(storage.removeItem).toHaveBeenCalledWith('gym_user')
       expect(storage.removeItem).toHaveBeenCalledWith('gym_guest')
       expect(storage.removeItem).toHaveBeenCalledWith('gym_dirty')
+      expect(storage.removeItem).toHaveBeenCalledWith('gym_last_synced_ts')
       expect(storage.removeItem).toHaveBeenCalledWith('gym_state_v1')
       expect(transport).toHaveBeenCalledWith('/api/logout', expect.objectContaining({ method: 'POST' }))
     })
@@ -166,6 +187,50 @@ describe('useStore', () => {
       expect(storage.getItem('gym_dirty')).toBeNull()
     })
 
+    it('pushState sends baseTs when gym_last_synced_ts is present and tracks updated _ts on success', async () => {
+      const transport = vi.fn().mockResolvedValue({ ok: true, ts: 98765 })
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u1' })
+      storage.setItem('gym_last_synced_ts', '12345')
+      storage.setItem('gym_dirty', '1')
+
+      await store.pushState()
+
+      expect(transport).toHaveBeenCalledWith('/api/data', {
+        method: 'PUT',
+        body: JSON.stringify({ state: store.S, baseTs: 12345 })
+      })
+      expect(storage.removeItem).toHaveBeenCalledWith('gym_dirty')
+      expect(storage.setItem).toHaveBeenCalledWith('gym_last_synced_ts', '98765')
+      expect(storage.getItem('gym_last_synced_ts')).toBe('98765')
+    })
+
+    it('pushState handles 409 conflict by opening openConflictDialog', async () => {
+      const { useUI } = await import('./useUI.js')
+      useUI.getState().closeAll()
+
+      const serverState = { _ts: 8888, workouts: [{ id: 'srv-1' }] }
+      const err = new Error('conflict')
+      err.status = 409
+      err.serverState = serverState
+      const transport = vi.fn().mockRejectedValue(err)
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u1' })
+
+      await store.pushState()
+
+      expect(storage.setItem).toHaveBeenCalledWith('gym_dirty', '1')
+      const sheets = useUI.getState().sheets
+      expect(sheets.length).toBe(1)
+      expect(sheets[0].kind).toBe('center')
+      const element = sheets[0].render(() => {})
+      expect(element.props.serverState).toEqual(serverState)
+    })
+
     it('pushState sets gym_dirty on network or transport failure', async () => {
       const transport = vi.fn().mockRejectedValue(new Error('Network error'))
       setTransport(transport)
@@ -190,6 +255,7 @@ describe('useStore', () => {
       await store.pullState()
 
       expect(useStore.getState().S.workouts).toEqual([{ id: 'w1', name: 'Push Day' }])
+      expect(storage.setItem).toHaveBeenCalledWith('gym_last_synced_ts', String(serverState._ts))
     })
 
     it('pullState preserves in-progress active workout when adopting server state', async () => {
@@ -239,22 +305,22 @@ describe('useStore', () => {
       expect(transport).toHaveBeenCalledWith('/api/data', expect.objectContaining({ method: 'PUT' }))
     })
 
-    it('pullState does not overwrite local changes when gym_dirty is set, triggers push instead', async () => {
+    it('pullState pushes local changes when gym_dirty is set and server is older', async () => {
       const transport = vi.fn()
       setTransport(transport)
 
       const store = useStore.getState()
       store.setUser({ id: 'u1' })
       store.update(s => {
-        s._ts = 1000
         s.workouts = [{ id: 'dirty-local' }]
       }, false)
+      const localTs = store.S._ts
       storage.setItem('gym_dirty', '1')
 
-      // Server has higher timestamp, but local is dirty
+      // Server returns older state
       transport.mockImplementation(async (path, opts) => {
         if (path === '/api/data' && (!opts || opts.method !== 'PUT')) {
-          return { state: { _ts: 9999, workouts: [{ id: 'server-newer' }] } }
+          return { state: { _ts: localTs - 5000, workouts: [{ id: 'server-older' }] } }
         }
         return { ok: true }
       })
@@ -265,6 +331,38 @@ describe('useStore', () => {
       expect(useStore.getState().S.workouts).toEqual([{ id: 'dirty-local' }])
       // Should push dirty local changes
       expect(transport).toHaveBeenCalledWith('/api/data', expect.objectContaining({ method: 'PUT' }))
+    })
+
+    it('pullState opens openConflictDialog when gym_dirty is set and server state has newer _ts', async () => {
+      const { useUI } = await import('./useUI.js')
+      useUI.getState().closeAll()
+
+      const transport = vi.fn()
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u1' })
+      store.update(s => {
+        s.workouts = [{ id: 'dirty-local' }]
+      }, false)
+      const localTs = useStore.getState().S._ts
+      storage.setItem('gym_dirty', '1')
+
+      const serverState = { _ts: localTs + 5000, workouts: [{ id: 'server-newer' }] }
+      transport.mockResolvedValue({ state: serverState })
+
+      await store.pullState()
+
+      // Should keep local state, not overwrite with server
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'dirty-local' }])
+      // Should NOT have pushed to server
+      expect(transport).not.toHaveBeenCalledWith('/api/data', expect.objectContaining({ method: 'PUT' }))
+      // Should open conflict dialog
+      const sheets = useUI.getState().sheets
+      expect(sheets.length).toBe(1)
+      expect(sheets[0].kind).toBe('center')
+      const element = sheets[0].render(() => {})
+      expect(element.props.serverState).toEqual(serverState)
     })
 
     it('pullState silently retains local state when offline/api fails', async () => {

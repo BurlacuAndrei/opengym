@@ -13,7 +13,14 @@ export async function api(path, opts) {
   if (transport) return transport(path, opts)
   const r = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts))
   const data = await r.json().catch(() => ({}))
-  if (!r.ok) { const e = new Error(data.error || ('HTTP ' + r.status)); e.status = r.status; throw e }
+  if (!r.ok) {
+    const e = new Error(data.error || ('HTTP ' + r.status))
+    e.status = r.status
+    e.data = data
+    e.state = data.state
+    e.serverState = data.state || data.serverState
+    throw e
+  }
   return data
 }
 
