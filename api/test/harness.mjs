@@ -47,6 +47,20 @@ export function certFingerprintToApkOrigin(fingerprint) {
   return `android:apk-key-hash:${b64u}`;
 }
 
+export function isNativeClient(req, body) {
+  if (body?.native === true) return true;
+  if (req?.headers?.['x-client-mode'] === 'native' || req?.headers?.['x-opengym-native'] === '1') return true;
+  try {
+    const raw = body?.credential?.response?.clientDataJSON;
+    if (raw) {
+      const jsonStr = Buffer.from(raw, 'base64url').toString('utf8');
+      const parsed = JSON.parse(jsonStr);
+      if (typeof parsed.origin === 'string' && parsed.origin.startsWith('android:apk-key-hash:')) return true;
+    }
+  } catch {}
+  return false;
+}
+
 export async function spawnServer(options = {}) {
   const port = options.port ?? (await getFreePort());
   let dataDir = options.dataDir;
