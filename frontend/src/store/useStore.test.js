@@ -367,4 +367,138 @@ describe('useStore', () => {
       expect(useStore.getState().ready).toBe(true)
     })
   })
+
+  describe('conflict resolution & local backup', () => {
+    it('creates local backup before replacing on "server" choice and clears gym_dirty', async () => {
+      const store = useStore.getState()
+      store.setUser({ id: 'u1' })
+      store.update(s => {
+        s.workouts = [{ id: 'device-workout', name: 'Leg Day' }]
+      }, false)
+      storage.setItem('gym_dirty', '1')
+
+      const serverState = {
+        _ts: 9999,
+        workouts: [{ id: 'server-workout', name: 'Upper Body' }]
+      }
+
+      await store.resolveConflict('server', serverState)
+
+      // 1. Verify backup was saved to storage before state was overwritten
+      expect(storage.setItem).toHaveBeenCalledWith(
+        'gym_backup_latest',
+        expect.stringContaining('device-workout')
+      )
+      const latestRaw = storage.getItem('gym_backup_latest')
+      expect(latestRaw).toBeTruthy()
+      const backupObj = JSON.parse(latestRaw)
+      expect(backupObj.state.workouts).toEqual([{ id: 'device-workout', name: 'Leg Day' }])
+
+      // 2. Verify state was replaced with server state
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'server-workout', name: 'Upper Body' }])
+
+      // 3. Verify gym_dirty was cleared
+      expect(storage.removeItem).toHaveBeenCalledWith('gym_dirty')
+    })
+
+    it('preserves in-progress active workout on "server" choice', async () => {
+      const store = useStore.getState()
+      const activeWorkout = { id: 'act-in-progress', name: 'Chest' }
+      store.update(s => {
+        s.active = activeWorkout
+        s.workouts = [{ id: 'old-w' }]
+      }, false)
+
+      const serverState = {
+        _ts: 8888,
+        workouts: [{ id: 'server-w' }],
+        active: null
+      }
+
+      await store.resolveConflict('server', serverState)
+
+      expect(useStore.getState().S.active).toEqual(activeWorkout)
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'server-w' }])
+    })
+
+    it('pushes local state on "device" choice', async () => {
+      const transport = vi.fn().mockResolvedValue({ ok: true })
+      setTransport(transport)
+
+      const store = useStore.getState()
+      store.setUser({ id: 'u1' })
+      store.update(s => {
+        s.workouts = [{ id: 'device-w', name: 'Arms' }]
+      }, false)
+      storage.setItem('gym_dirty', '1')
+
+      const serverState = {
+        _ts: 5555,
+        workouts: [{ id: 'server-w', name: 'Cardio' }]
+      }
+
+      await store.resolveConflict('device', serverState)
+
+      // Pushed local state to server
+      expect(transport).toHaveBeenCalledWith('/api/data', {
+        method: 'PUT',
+        body: JSON.stringify({ state: useStore.getState().S })
+      })
+
+      // Retained local state
+      expect(useStore.getState().S.workouts).toEqual([{ id: 'device-w', name: 'Arms' }])
+      // Removed dirty flag
+      expect(storage.removeItem).toHaveBeenCalledWith('gym_dirty')
+    })
+
+    it('handles backup library createLocalBackup, getLatestBackup, and restoreLocalBackup', async () => {
+      const { createLocalBackup, getLatestBackup, restoreLocalBackup } = await import('../lib/backup.js')
+
+      const sampleState = {
+        unit: 'kg',
+        workouts: [{ id: 'b1', name: 'Bench' }]
+      }
+
+      const backup = createLocalBackup(sampleState, 1234567890)
+      expect(backup).toBeTruthy()
+      expect(backup.key).toBe('gym_backup_1234567890')
+      expect(backup.state.workouts).toEqual(sampleState.workouts)
+
+      const latest = getLatestBackup()
+      expect(latest).toBeTruthy()
+      expect(latest.timestamp).toBe(1234567890)
+
+      const restored = restoreLocalBackup(backup.key)
+      expect(restored.workouts).toEqual(sampleState.workouts)
+    })
+
+    it('openConflictDialog opens sheet and resolves with chosen option', async () => {
+      const { useUI } = await import('./useUI.js')
+      const { openConflictDialog } = await import('../components/ConflictDialog.jsx')
+
+      useUI.getState().closeAll()
+      expect(useUI.getState().sheets.length).toBe(0)
+
+      const serverState = { _ts: 1234, workouts: [{ id: 'srv-w' }] }
+      let resolved = false
+      const promise = openConflictDialog({ serverState, autoResolve: false })
+      promise.then(choice => {
+        expect(choice).toBe('device')
+        resolved = true
+      })
+
+      const sheets = useUI.getState().sheets
+      expect(sheets.length).toBe(1)
+      expect(sheets[0].kind).toBe('center')
+
+      // Render the sheet to access the onResolve prop
+      const element = sheets[0].render(() => useUI.getState().closeSheet(sheets[0].id))
+      expect(element.props.serverState).toEqual(serverState)
+
+      // Simulate choosing "device"
+      await element.props.onResolve('device')
+      expect(resolved).toBe(true)
+      expect(useUI.getState().sheets.length).toBe(0)
+    })
+  })
 })

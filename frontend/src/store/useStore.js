@@ -4,6 +4,7 @@ import { localTZ } from '../lib/format.js'
 import { registerCustom } from '../lib/exercises.js'
 import { DEMO, DEMO_SEEDED } from '../lib/demo.js'
 import { MOBILE, nativeLoad, nativeSave, syncReminder } from '../lib/mobile.js'
+import { createLocalBackup } from '../lib/backup.js'
 
 const KEY = 'gym_state_v1'
 export const DEF = {
@@ -131,6 +132,22 @@ export const useStore = create((set, get) => {
       } catch (e) { /* offline — keep local */ }
     },
 
+    async resolveConflict(choice, serverState) {
+      const c = (choice || '').toLowerCase()
+      if (c === 'server') {
+        createLocalBackup(get().S)
+        if (serverState) {
+          const active = get().S?.active
+          const next = Object.assign(clone(DEF), serverState)
+          if (active && !next.active) next.active = active
+          get().replaceState(next, false)
+        }
+        localStorage.removeItem('gym_dirty')
+      } else if (c === 'device') {
+        await get().pushState()
+      }
+    },
+
     async signOut() {
       try { await get().pushState(); await api('/api/logout', { method: 'POST', body: '{}' }) } catch (e) { /* */ }
       clearLocalSession()
@@ -203,3 +220,4 @@ export const useStore = create((set, get) => {
 })
 
 export { hasData }
+export const resolveConflict = (choice, serverState) => useStore.getState().resolveConflict(choice, serverState)
