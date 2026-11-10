@@ -1,12 +1,17 @@
 package ch.duartesantos.opengym
 
 import androidx.core.content.ContextCompat
+import androidx.credentials.CreateCredentialResponse
+import androidx.credentials.CreatePublicKeyCredentialRequest
+import androidx.credentials.CreatePublicKeyCredentialResponse
 import androidx.credentials.CredentialManager
 import androidx.credentials.CredentialManagerCallback
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.GetCredentialResponse
 import androidx.credentials.GetPublicKeyCredentialOption
 import androidx.credentials.PublicKeyCredential
+import androidx.credentials.exceptions.CreateCredentialCancellationException
+import androidx.credentials.exceptions.CreateCredentialException
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
@@ -18,6 +23,21 @@ import com.getcapacitor.annotation.PluginMethod
 
 @CapacitorPlugin(name = "NativePasskey")
 class NativePasskeyPlugin : Plugin() {
+
+    @PluginMethod
+    fun register(call: PluginCall) {
+        executeCreateCredential(call)
+    }
+
+    @PluginMethod
+    fun create(call: PluginCall) {
+        executeCreateCredential(call)
+    }
+
+    @PluginMethod
+    fun createCredential(call: PluginCall) {
+        executeCreateCredential(call)
+    }
 
     @PluginMethod
     fun login(call: PluginCall) {
@@ -37,6 +57,48 @@ class NativePasskeyPlugin : Plugin() {
     @PluginMethod
     fun signIn(call: PluginCall) {
         executeGetCredential(call)
+    }
+
+    private fun executeCreateCredential(call: PluginCall) {
+        val currentActivity = activity ?: run {
+            call.reject("Activity unavailable", "ACTIVITY_UNAVAILABLE")
+            return
+        }
+
+        val requestJson = extractRequestJson(call) ?: run {
+            call.reject("Missing registration options JSON", "INVALID_OPTIONS")
+            return
+        }
+
+        val credentialManager = CredentialManager.create(currentActivity)
+        val createPublicKeyCredentialRequest = CreatePublicKeyCredentialRequest(requestJson)
+
+        credentialManager.createCredentialAsync(
+            currentActivity,
+            createPublicKeyCredentialRequest,
+            null,
+            ContextCompat.getMainExecutor(currentActivity),
+            object : CredentialManagerCallback<CreateCredentialResponse, CreateCredentialException> {
+                override fun onResult(result: CreateCredentialResponse) {
+                    if (result is CreatePublicKeyCredentialResponse) {
+                        resolveCredentialJson(call, result.registrationResponseJson)
+                    } else {
+                        call.reject("Unexpected credential type: ${result::class.java.name}", "UNEXPECTED_CREDENTIAL_TYPE")
+                    }
+                }
+
+                override fun onError(e: CreateCredentialException) {
+                    when (e) {
+                        is CreateCredentialCancellationException -> {
+                            call.reject("USER_CANCELLED", "USER_CANCELLED", e)
+                        }
+                        else -> {
+                            call.reject(e.message ?: "Passkey registration failed", "CREATE_CREDENTIAL_FAILED", e)
+                        }
+                    }
+                }
+            }
+        )
     }
 
     private fun executeGetCredential(call: PluginCall) {
@@ -65,21 +127,7 @@ class NativePasskeyPlugin : Plugin() {
                 override fun onResult(result: GetCredentialResponse) {
                     val credential = result.credential
                     if (credential is PublicKeyCredential) {
-                        try {
-                            val responseJson = credential.authenticationResponseJson
-                            val credObj = JSObject(responseJson)
-                            val ret = JSObject()
-                            ret.put("credential", credObj)
-                            ret.put("responseJson", responseJson)
-                            val keys = credObj.keys()
-                            while (keys.hasNext()) {
-                                val key = keys.next()
-                                ret.put(key, credObj.get(key))
-                            }
-                            call.resolve(ret)
-                        } catch (e: Exception) {
-                            call.reject("Failed to parse credential response: ${e.message}", "PARSE_ERROR", e)
-                        }
+                        resolveCredentialJson(call, credential.authenticationResponseJson)
                     } else {
                         call.reject("Unexpected credential type: ${credential::class.java.name}", "UNEXPECTED_CREDENTIAL_TYPE")
                     }
@@ -100,6 +148,23 @@ class NativePasskeyPlugin : Plugin() {
                 }
             }
         )
+    }
+
+    private fun resolveCredentialJson(call: PluginCall, responseJson: String) {
+        try {
+            val credObj = JSObject(responseJson)
+            val ret = JSObject()
+            ret.put("credential", credObj)
+            ret.put("responseJson", responseJson)
+            val keys = credObj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                ret.put(key, credObj.get(key))
+            }
+            call.resolve(ret)
+        } catch (e: Exception) {
+            call.reject("Failed to parse credential response: ${e.message}", "PARSE_ERROR", e)
+        }
     }
 
     private fun extractRequestJson(call: PluginCall): String? {
