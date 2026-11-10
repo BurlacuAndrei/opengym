@@ -1,3 +1,5 @@
+import { nativeTransport } from './native-transport.js'
+
 // Backend + WebAuthn helpers (ported from the vanilla app).
 export const IS_APPLE = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent)
 export const IS_ANDROID = /Android/.test(navigator.userAgent)
@@ -5,23 +7,15 @@ export const BIO = IS_APPLE ? 'Face ID / Touch ID' : IS_ANDROID ? 'fingerprint o
 export const VAULT = IS_APPLE ? 'iCloud Keychain' : IS_ANDROID ? 'Google Password Manager' : 'your password manager'
 export const webauthnOK = () => !!(window.PublicKeyCredential && navigator.credentials)
 
+export { nativeTransport, isOffline, isAuthError, isConflictError } from './native-transport.js'
+
 let transport = null
 export const setTransport = fn => { transport = fn }
 export const resetTransport = () => { transport = null }
 
 export async function api(path, opts) {
   if (transport) return transport(path, opts)
-  const r = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts))
-  const data = await r.json().catch(() => ({}))
-  if (!r.ok) {
-    const e = new Error(data.error || ('HTTP ' + r.status))
-    e.status = r.status
-    e.data = data
-    e.state = data.state
-    e.serverState = data.state || data.serverState
-    throw e
-  }
-  return data
+  return nativeTransport(path, opts)
 }
 
 const bufToB64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
