@@ -15,6 +15,8 @@ import { uid } from './format.js'
 import { mergePlan } from './plan-share.js'
 import { POLICIES } from './progression.js'
 import { t } from './i18n.js'
+export { canonicalPlan, hashPlan, planHash } from 'shared/coach/index.js'
+import { planHash } from 'shared/coach/index.js'
 
 // Bumping this re-prompts everyone: it means what we share, or who we share it with, changed.
 export const CONSENT_VERSION = 1
@@ -46,50 +48,7 @@ export const coachAvailable = (config, user, { demo, mobile, byok } = {}) =>
 export const hasConsent = S => !!S?.coach?.consent?.agreedAt && S.coach.consent.version === CONSENT_VERSION
 
 /* ============================ plan fingerprint ============================ */
-
-/**
- * Mirror of `canonicalPlan` in api/coach/payload.js — field for field, including the rule
- * that every absent value is written out as a zero so "no weight" and "0 kg" cannot hash
- * apart. If you change one, change both; coach.test.js checks them against shared fixtures.
- */
-export function canonicalPlan(S) {
-  return {
-    routines: (S.routines || []).map(r => ({
-      id: r.id, name: r.name || '', prog: r.prog || '',
-      ex: (r.ex || []).map(e => {
-        const mode = modeOf(e)
-        return {
-          id: e.id, mode, sets: e.sets || 0,
-          reps: mode === 'reps' ? (e.reps || 0) : 0,
-          sec: mode === 'time' ? (e.sec || 0) : 0,
-          min: mode === 'cardio' ? (e.min || 0) : 0,
-          speed: mode === 'cardio' ? (e.speed || 0) : 0,
-          weight: mode === 'cardio' ? 0 : (e.weight || 0),
-          prog: e.prog || '', inc: e.inc || 0, repsMin: e.repsMin || 0, sg: e.sg || ''
-        }
-      })
-    })),
-    week: Object.fromEntries([1, 2, 3, 4, 5, 6, 0].filter(d => S.week?.[d]).map(d => [d, S.week[d]]))
-  }
-}
-
-/** FNV-1a-ish 64-bit fingerprint. Mirror of hashPlan in api/coach/jobs.js. */
-export function hashPlan(plan) {
-  const canon = JSON.stringify({
-    routines: (plan?.routines || []).map(r => [r.id, r.name, r.prog, (r.ex || []).map(e =>
-      [e.id, e.mode, e.sets, e.reps, e.sec, e.min, e.speed, e.weight, e.prog, e.inc, e.repsMin, e.sg].join(':')
-    )]),
-    week: Object.keys(plan?.week || {}).sort().map(k => k + '=' + plan.week[k])
-  })
-  let h1 = 0x811c9dc5, h2 = 0x01000193
-  for (let i = 0; i < canon.length; i++) {
-    const c = canon.charCodeAt(i)
-    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0
-    h2 = Math.imul(h2 ^ ((c << 3) | i & 7), 0x85ebca6b) >>> 0
-  }
-  return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0')
-}
-export const planHash = S => hashPlan(canonicalPlan(S))
+// canonicalPlan, hashPlan, planHash are imported from shared/coach/
 
 /* ============================ staleness ============================ */
 

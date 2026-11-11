@@ -1,0 +1,11 @@
+{
+  "name": "shared",
+  "version": "1.2.3",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./coach": "./coach/index.js",
+    "./coach/*": "./coach/*.js",
+    "./coach/*.json": "./coach/*.json"
+  }
+}

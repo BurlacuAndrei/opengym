@@ -20,6 +20,8 @@ import * as cfgStore from './config.js';
 import { adapterFor } from './adapters/index.js';
 import * as payloadLib from './payload.js';
 import { extractJSON, validatePlan, validateReview, contractOK } from './validate.js';
+import { buildPrompt } from '../../shared/coach/prompts.js';
+import { hashPlan } from '../../shared/coach/plan.js';
 
 const DATA = process.env.DATA_DIR || '/data';
 const COACH_DIR = path.join(DATA, 'coach');
@@ -195,22 +197,7 @@ export function setProposalHook(fn) { onProposal = fn; }
 
 /* ---------- prompt assembly ---------- */
 
-const promptCache = new Map();
-function promptPart(name) {
-  if (!promptCache.has(name)) promptCache.set(name, fs.readFileSync(path.join(PROMPTS, name), 'utf8'));
-  return promptCache.get(name);
-}
-export function buildPrompt(kind, payload, repair) {
-  const task = kind === 'review' ? 'review.md' : payload.refine ? 'refine.md' : 'create.md';
-  let out = promptPart('common.md') + '\n\n---\n\n' + promptPart(task) +
-    '\n\n---\n\n## Payload\n\n```json\n' + JSON.stringify(payload, null, 1) + '\n```\n';
-  if (repair) {
-    out += '\n\n---\n\n' + promptPart('repair.md')
-      .replace('{{PREVIOUS}}', String(repair.previous || '').slice(0, 4000))
-      .replace('{{ERRORS}}', repair.errors.map(e => '- ' + e).join('\n'));
-  }
-  return out;
-}
+export { buildPrompt };
 
 /* ---------- execution ---------- */
 
@@ -301,21 +288,7 @@ async function invoke(adapter, cfg, payload, jobDir, env, job, repair) {
  * function exactly. A mismatch therefore means the plan genuinely moved — not that two
  * implementations disagree about key order or about what "no weight" looks like.
  */
-export function hashPlan(plan) {
-  const canon = JSON.stringify({
-    routines: (plan?.routines || []).map(r => [r.id, r.name, r.prog, (r.ex || []).map(e =>
-      [e.id, e.mode, e.sets, e.reps, e.sec, e.min, e.speed, e.weight, e.prog, e.inc, e.repsMin, e.sg].join(':')
-    )]),
-    week: Object.keys(plan?.week || {}).sort().map(k => k + '=' + plan.week[k])
-  });
-  let h1 = 0x811c9dc5, h2 = 0x01000193;
-  for (let i = 0; i < canon.length; i++) {
-    const c = canon.charCodeAt(i);
-    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
-    h2 = Math.imul(h2 ^ ((c << 3) | i & 7), 0x85ebca6b) >>> 0;
-  }
-  return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0');
-}
+export { hashPlan };
 
 /* ---------- decisions ---------- */
 
