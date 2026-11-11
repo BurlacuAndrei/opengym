@@ -36,12 +36,13 @@ const coachOf = s => (s.coach = s.coach || emptyCoach())
 // One predicate, one place. Every Coach entry point in the UI is behind it, which is what
 // makes "an instance with no provider is byte-identical to before" a claim worth testing.
 //
-// The demo build is the one exception, and it is deliberate: it has no backend and no
+// The demo build is one exception, and it is deliberate: it has no backend and no
 // account, but it does have a canned provider (lib/coach-demo.js), and hiding the app's most
 // interesting feature from the page people are sent to look at it on would be a strange
-// choice. The mobile build stays out — there is no server there to fake anything with.
-export const coachAvailable = (config, user, { demo, mobile } = {}) =>
-  mobile ? false : demo ? true : !!(config?.coach?.enabled && user)
+// choice. The mobile build exposes Coach when connected and signed in to a Coach-enabled
+// server, or when a local BYOK key is configured.
+export const coachAvailable = (config, user, { demo, mobile, byok } = {}) =>
+  mobile ? !!((config?.coach?.enabled && user) || byok) : demo ? true : !!(config?.coach?.enabled && user)
 export const hasConsent = S => !!S?.coach?.consent?.agreedAt && S.coach.consent.version === CONSENT_VERSION
 
 /* ============================ plan fingerprint ============================ */

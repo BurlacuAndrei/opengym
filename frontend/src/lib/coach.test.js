@@ -40,9 +40,17 @@ describe('gating', () => {
     expect(coachAvailable({ coach: { enabled: true } }, null)).toBe(false)
   })
 
-  it('is off in the mobile build, which has no server to run anything', () => {
-    expect(coachAvailable({ coach: { enabled: true } }, { id: 'u' }, { mobile: true })).toBe(false)
+  it('on mobile, is available when connected to a Coach-enabled server or local BYOK configured', () => {
+    // connected-enabled returns true
+    expect(coachAvailable({ coach: { enabled: true } }, { id: 'u' }, { mobile: true })).toBe(true)
+    // local-only/unconnected returns false
     expect(coachAvailable(null, null, { mobile: true })).toBe(false)
+    expect(coachAvailable({ coach: { enabled: true } }, null, { mobile: true })).toBe(false)
+    // connected-disabled returns false
+    expect(coachAvailable({ coach: { enabled: false } }, { id: 'u' }, { mobile: true })).toBe(false)
+    // local BYOK returns true
+    expect(coachAvailable(null, null, { mobile: true, byok: true })).toBe(true)
+    expect(coachAvailable(null, null, { mobile: true, byok: 'key' })).toBe(true)
   })
 
   it('is on in the demo build, which fakes the provider locally', () => {
