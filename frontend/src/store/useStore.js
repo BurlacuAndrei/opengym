@@ -8,6 +8,7 @@ import { createLocalBackup } from '../lib/backup.js'
 import { openConflictDialog, openRegisterImportDialog } from '../components/ConflictDialog.jsx'
 import { getServerUrl, clearServerConfig } from '../lib/server-config.js'
 import { clearToken } from '../lib/token-storage.js'
+import * as privacy from '../lib/privacy.js'
 import { App as CapApp } from '@capacitor/app'
 
 const KEY = 'gym_state_v1'
@@ -24,7 +25,9 @@ export const DEF = {
   // AI Coach (issue: AI enablement). null until the profile opts in — a null namespace is the
   // same app it was before the feature existed, which is what Epic F asks for. Shape and
   // bounds live in lib/coach.js.
-  coach: null
+  coach: null,
+  // Informed consent records for external features (Issue #39).
+  privacy: { consents: {} }
 }
 const clone = o => JSON.parse(JSON.stringify(o))
 
@@ -118,6 +121,24 @@ export const useStore = create((set, get) => {
       persist(S, push)
     },
     replaceState(S, push = false) { persist(clone(S), push) },
+
+    // Privacy and consent management (Issue #39)
+    grantConsent(featureId, details = {}) {
+      get().update(s => {
+        privacy.grantConsent(s, featureId, details)
+      })
+    },
+    revokeConsent(featureId) {
+      get().update(s => {
+        privacy.revokeConsent(s, featureId)
+      })
+    },
+    hasConsent(featureId) {
+      return privacy.hasConsent(get().S, featureId)
+    },
+    getConsent(featureId) {
+      return privacy.getConsent(get().S, featureId)
+    },
 
     isServerMode: () => Boolean(get().user && (!MOBILE || getServerUrl())),
     isGuest: () => localStorage.getItem('gym_guest') === '1',
@@ -385,6 +406,11 @@ export const useStore = create((set, get) => {
 })
 
 export { hasData }
+privacy.setPrivacyStore(useStore)
+export const grantConsent = (featureId, details) => useStore.getState().grantConsent(featureId, details)
+export const revokeConsent = (featureId) => useStore.getState().revokeConsent(featureId)
+export const hasConsent = (featureId) => useStore.getState().hasConsent(featureId)
+export const getConsent = (featureId) => useStore.getState().getConsent(featureId)
 export const resolveConflict = (choice, serverState) => useStore.getState().resolveConflict(choice, serverState)
 export const reconcileOnConnect = (serverState) => useStore.getState().reconcileOnConnect(serverState)
 export const reconcileOnRegister = (choice, serverState) => useStore.getState().reconcileOnRegister(choice, serverState)
