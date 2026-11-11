@@ -182,6 +182,8 @@ export function authStatus() {
     try { connectedAt = fs.statSync(codexAuthFile()).mtime.toISOString(); } catch { /* presence was checked above */ }
     return { state: 'connected', type: 'chatgpt-cli', account: null, connectedAt, expiresAt: null };
   }
+  const meta = providerMeta(cfg);
+  if (meta.requiresApiKey === false) return { state: 'not-required' };
   if (!cfg.auth) return { state: 'disconnected' };
   const auth = decrypt(cfg.auth.data);
   if (!auth) return { state: 'unreadable' };   // ./data restored without its secret file

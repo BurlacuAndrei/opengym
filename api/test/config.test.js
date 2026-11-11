@@ -66,7 +66,7 @@ test('retired Gemini and Custom command configurations reset to unconfigured Cla
   });
   cfg.reset();
   const current = cfg.load();
-  assert.deepEqual(Object.keys(cfg.PROVIDERS).sort(), ['claude', 'codex', 'fixture']);
+  assert.deepEqual(Object.keys(cfg.PROVIDERS).sort(), ['anthropic', 'claude', 'codex', 'fixture', 'groq', 'mistral', 'ollama', 'openai', 'openrouter']);
   assert.equal(current.provider, 'claude');
   assert.equal(current.auth, null);
   assert.equal(Object.hasOwn(current, 'customCommand'), false);
@@ -154,4 +154,116 @@ test('weekly does not fire twice on the same day', () => {
     lastReview: { at: new Date('2026-07-26T18:00:00Z').getTime() }
   });
   assert.equal(cadence.isDue(coach, S, { date: '2026-07-26', hhmm: '18:00', weekday: 0 }), false);
+});
+
+test('shared coach exports isDue matching server cadence', async () => {
+  const shared = await import('shared/coach');
+  assert.equal(cadence.isDue, shared.isDue);
+});
+
+/* ---------------- HTTP provider support (Issue #71) ---------------- */
+
+test('HTTP provider registry initializes and exposes standard presets (Issue #71)', () => {
+  const expectedProviders = ['anthropic', 'claude', 'codex', 'fixture', 'groq', 'mistral', 'ollama', 'openai', 'openrouter'];
+  assert.deepEqual(Object.keys(cfg.PROVIDERS).sort(), expectedProviders);
+
+  // Anthropic HTTP
+  assert.equal(cfg.PROVIDERS.anthropic.apiKeyEnv, 'ANTHROPIC_API_KEY');
+  assert.equal(cfg.PROVIDERS.anthropic.requiresApiKey, true);
+
+  // OpenAI HTTP
+  assert.equal(cfg.PROVIDERS.openai.apiKeyEnv, 'OPENAI_API_KEY');
+  assert.equal(cfg.PROVIDERS.openai.requiresApiKey, true);
+
+  // Groq HTTP
+  assert.equal(cfg.PROVIDERS.groq.apiKeyEnv, 'GROQ_API_KEY');
+  assert.equal(cfg.PROVIDERS.groq.requiresApiKey, true);
+
+  // OpenRouter HTTP
+  assert.equal(cfg.PROVIDERS.openrouter.apiKeyEnv, 'OPENROUTER_API_KEY');
+  assert.equal(cfg.PROVIDERS.openrouter.requiresApiKey, true);
+
+  // Mistral HTTP
+  assert.equal(cfg.PROVIDERS.mistral.apiKeyEnv, 'MISTRAL_API_KEY');
+  assert.equal(cfg.PROVIDERS.mistral.requiresApiKey, true);
+
+  // Ollama HTTP (local, no API key required)
+  assert.equal(cfg.PROVIDERS.ollama.apiKeyEnv, null);
+  assert.equal(cfg.PROVIDERS.ollama.requiresApiKey, false);
+  assert.equal(cfg.PROVIDERS.ollama.local, true);
+});
+
+test('HTTP provider configuration validation (Issue #71)', () => {
+  // Valid configurations
+  assert.equal(cfg.validateConfig({ enabled: true, provider: 'openai' }).ok, true);
+  assert.equal(cfg.validateConfig({ provider: 'ollama', endpoint: 'http://localhost:11434/v1/chat/completions' }).ok, true);
+  assert.equal(cfg.validateConfig({ provider: 'groq', model: 'llama-3.3-70b-versatile' }).ok, true);
+
+  // Invalid configurations
+  assert.equal(cfg.validateConfig(null).ok, false);
+  assert.equal(cfg.validateConfig({ provider: 'nonexistent-provider' }).ok, false);
+  assert.equal(cfg.validateConfig({ endpoint: 'http://remote.example.com/api' }).ok, false, 'rejects remote plaintext HTTP');
+  assert.equal(cfg.validateConfig({ caps: 'invalid' }).ok, false);
+});
+
+test('HTTP provider switching resets auth and updates capability flags (Issue #71)', () => {
+  // 1. Configure OpenAI with API key
+  cfg.save({
+    enabled: true,
+    provider: 'openai',
+    auth: { type: 'apikey', connectedAt: new Date().toISOString(), data: cfg.encrypt({ token: 'sk-test-key-openai' }) }
+  });
+  assert.equal(cfg.isEnabled(), true);
+  assert.equal(cfg.isConnected(), true);
+  assert.equal(auth.authStatus().state, 'connected');
+  assert.deepEqual(cfg.publicConfig(), { enabled: true, provider: 'openai', providerLabel: 'OpenAI' });
+
+  // 2. Switch to Groq -> auth is cleared (belongs to old provider)
+  const validation = cfg.validateConfig({ provider: 'groq' });
+  assert.equal(validation.ok, true);
+  const patch = validation.patch;
+  if (patch.provider !== cfg.load().provider) patch.auth = null;
+  cfg.save(patch);
+
+  assert.equal(cfg.load().provider, 'groq');
+  assert.equal(cfg.load().auth, null);
+  assert.equal(cfg.isConnected(), false);
+  assert.equal(auth.authStatus().state, 'disconnected');
+  assert.equal(cfg.publicConfig(), null, 'disconnected provider drops coach from /api/config');
+
+  // 3. Set Groq key -> connected again
+  auth.setApiKey('gsk-test-key-groq');
+  assert.equal(cfg.isConnected(), true);
+  assert.equal(auth.authStatus().state, 'connected');
+  assert.deepEqual(cfg.publicConfig(), { enabled: true, provider: 'groq', providerLabel: 'Groq' });
+
+  // 4. Switch to Ollama (local provider, requiresApiKey: false)
+  const toOllama = cfg.validateConfig({ provider: 'ollama' }).patch;
+  if (toOllama.provider !== cfg.load().provider) toOllama.auth = null;
+  cfg.save(toOllama);
+
+  assert.equal(cfg.load().provider, 'ollama');
+  assert.equal(cfg.isConnected(), true, 'Ollama connects without credentials');
+  assert.equal(auth.authStatus().state, 'not-required');
+  assert.deepEqual(cfg.publicConfig(), { enabled: true, provider: 'ollama', providerLabel: 'Ollama (Local)' });
+
+  // 5. Turn coach off -> capability flag dropped
+  cfg.save({ enabled: false });
+  assert.equal(cfg.isEnabled(), false);
+  assert.equal(cfg.isConnected(), false);
+  assert.equal(cfg.publicConfig(), null);
+});
+
+test('HTTP provider jobEnv injects provider API key without process leakage (Issue #71)', () => {
+  cfg.save({
+    enabled: true,
+    provider: 'anthropic',
+    auth: { type: 'apikey', data: cfg.encrypt({ token: 'sk-ant-http-secret' }) }
+  });
+  const env = cfg.jobEnv('/tmp/coach-http-job');
+  assert.equal(env.ANTHROPIC_API_KEY, 'sk-ant-http-secret');
+  assert.equal(env.COACH_API_KEY, 'sk-ant-http-secret');
+  assert.equal(env.OPENAI_API_KEY, undefined);
+  assert.equal(env.GROQ_API_KEY, undefined);
+  assert.equal(env.HOME, '/tmp/coach-http-job');
 });

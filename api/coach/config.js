@@ -14,6 +14,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { unprivilegedIds } from './adapters/spawn.js';
+import { PROVIDER_PRESETS, validateEndpoint } from '../../shared/coach/providers.js';
 
 const DATA = process.env.DATA_DIR || '/data';
 const FILE = path.join(DATA, 'coach.json');
@@ -24,12 +25,41 @@ const coachCodexHome = process.env.COACH_CODEX_HOME || path.join(DATA, 'codex');
 const COACH_CODEX_CONFIG = `# Managed by openGym; do not add plugins, MCP servers, or broad permissions here.\ncli_auth_credentials_store = "file"\nallow_login_shell = false\napproval_policy = "never"\nweb_search = "disabled"\ndefault_permissions = "coach"\n\n[features]\nauth_elicitation = false\nshell_tool = false\nunified_exec = false\nshell_snapshot = false\nbrowser_use = false\nbrowser_use_external = false\nbrowser_use_full_cdp_access = false\nin_app_browser = false\ncomputer_use = false\napps = false\nplugins = false\nplugin_sharing = false\nremote_plugin = false\nmulti_agent = false\nskill_search = false\nskill_mcp_dependency_install = false\nworkspace_dependencies = false\nimage_generation = false\nhooks = false\ncode_mode_host = false\ntool_suggest = false\n\n[agents]\nenabled = false\n\n[permissions.coach.filesystem]\n":root" = "deny"\n":minimal" = "read"\n\n[permissions.coach.filesystem.":workspace_roots"]\n"." = "read"\n\n[permissions.coach.network]\nenabled = false\n`;
 export const COACH_DISABLED = /^(1|true|yes|on)$/i.test(process.env.COACH_DISABLED || '');
 
+// HTTP API key environment variable mapping
+const HTTP_API_KEY_ENVS = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  groq: 'GROQ_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+  mistral: 'MISTRAL_API_KEY',
+  ollama: null,
+};
+
+const HTTP_PROVIDERS = Object.fromEntries(
+  Object.values(PROVIDER_PRESETS).map(preset => [
+    preset.id,
+    {
+      label: preset.label,
+      runtime: `HTTP (${preset.protocol})`,
+      apiKeyEnv: preset.requiresApiKey ? (HTTP_API_KEY_ENVS[preset.id] || `${preset.id.toUpperCase()}_API_KEY`) : null,
+      oauthEnv: null,
+      protocol: preset.protocol,
+      requiresApiKey: !!preset.requiresApiKey,
+      local: !!preset.local,
+      endpoint: preset.endpoint,
+      defaultModel: preset.defaultModel,
+      models: preset.models,
+    }
+  ])
+);
+
 // Providers this build can drive. `runtime` is what the adapter runs; the credential fields
 // describe how an encrypted instance credential reaches that isolated runtime. Adding one is
 // an adapter file plus a row here — nothing else in the codebase branches on provider identity.
 export const PROVIDERS = {
   claude: { label: 'Claude Code', runtime: 'Claude Agent SDK', setupToken: true, apiKeyEnv: 'ANTHROPIC_API_KEY', oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN' },
   codex: { label: 'OpenAI Codex CLI', runtime: 'OpenAI Codex CLI', deviceLogin: true, apiKeyEnv: null, oauthEnv: null },
+  ...HTTP_PROVIDERS,
   // Test-only: drives the in-repo fixture CLI. Selectable so an instance can be exercised
   // end-to-end (and demoed) without any AI account at all.
   fixture: { label: 'Fixture (testing)', runtime: 'Fixture', apiKeyEnv: null, oauthEnv: null }
@@ -39,11 +69,48 @@ const DEFAULTS = {
   enabled: false,
   provider: 'claude',
   model: null,
+  endpoint: null,
   auth: null,                                    // { type:'cli-token'|'oauth'|'apikey', data:<encrypted> }
   caps: { perProfileDaily: 10, instanceDaily: 0 },   // 0 = unlimited
   log: []
 };
 const LOG_MAX = 100;
+
+/** Validates a partial or full coach configuration object */
+export function validateConfig(patch = {}) {
+  if (typeof patch !== 'object' || patch === null) {
+    return { ok: false, error: 'invalid configuration object' };
+  }
+  const clean = {};
+  if (patch.enabled !== undefined) clean.enabled = !!patch.enabled;
+  if (patch.provider !== undefined) {
+    if (!PROVIDERS[patch.provider]) return { ok: false, error: 'unknown provider' };
+    clean.provider = patch.provider;
+  }
+  if (patch.endpoint !== undefined) {
+    if (patch.endpoint) {
+      const endpointStr = String(patch.endpoint).trim().slice(0, 255);
+      const endpointCheck = validateEndpoint(endpointStr);
+      if (!endpointCheck.ok) return { ok: false, error: endpointCheck.error };
+      clean.endpoint = endpointCheck.url;
+    } else {
+      clean.endpoint = null;
+    }
+  }
+  if (patch.model !== undefined) {
+    clean.model = patch.model ? String(patch.model).trim().slice(0, 80) : null;
+  }
+  if (patch.caps !== undefined) {
+    if (typeof patch.caps !== 'object' || patch.caps === null) {
+      return { ok: false, error: 'invalid caps' };
+    }
+    clean.caps = {
+      perProfileDaily: Math.max(0, Math.min(200, +patch.caps.perProfileDaily || 0)),
+      instanceDaily: Math.max(0, Math.min(5000, +patch.caps.instanceDaily || 0))
+    };
+  }
+  return { ok: true, patch: clean };
+}
 
 /* ---------- at-rest encryption ---------- */
 
@@ -156,6 +223,8 @@ export function isConnected() {
   // Claude is intentionally setup-token only. Do not silently retain the old browser OAuth or
   // API-key paths after the instance has been upgraded to the Agent SDK flow.
   if (cfg.provider === 'claude' && cfg.auth?.type !== 'cli-token') return false;
+  const meta = providerMeta(cfg);
+  if (meta.requiresApiKey === false) return true;
   return !!(cfg.auth && decrypt(cfg.auth.data));
 }
 /** What /api/config tells every client. Absent ⇒ no Coach UI exists anywhere (FR-55/56). */
@@ -191,6 +260,7 @@ export function jobEnv(jobDir) {
       ? meta.oauthEnv
       : cfg.auth.type === 'apikey' ? meta.apiKeyEnv : null;
     if (name) env[name] = auth.token;
+    if (cfg.auth.type === 'apikey') env.COACH_API_KEY = auth.token;
   }
   return env;
 }

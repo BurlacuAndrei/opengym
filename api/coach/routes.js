@@ -123,20 +123,12 @@ export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
     'POST /api/admin/coach/config': async (req, res) => {
       if (!requireAdmin(req, res)) return;
       const body = await readBody(req);
-      const patch = {};
-      if (body.enabled !== undefined) patch.enabled = !!body.enabled;
-      if (body.provider !== undefined) {
-        if (!cfgStore.PROVIDERS[body.provider]) return json(res, 400, { error: 'unknown provider' });
+      const valid = cfgStore.validateConfig ? cfgStore.validateConfig(body) : { ok: true, patch: body };
+      if (!valid.ok) return json(res, 400, { error: valid.error });
+      const patch = valid.patch;
+      if (patch.provider !== undefined) {
         // Credentials belong to the provider that issued them.
-        if (body.provider !== cfgStore.load().provider) patch.auth = null;
-        patch.provider = body.provider;
-      }
-      if (body.model !== undefined) patch.model = body.model ? String(body.model).slice(0, 80) : null;
-      if (body.caps) {
-        patch.caps = {
-          perProfileDaily: Math.max(0, Math.min(200, +body.caps.perProfileDaily || 0)),
-          instanceDaily: Math.max(0, Math.min(5000, +body.caps.instanceDaily || 0))
-        };
+        if (patch.provider !== cfgStore.load().provider) patch.auth = null;
       }
       cfgStore.save(patch);
       json(res, 200, { ok: true });
