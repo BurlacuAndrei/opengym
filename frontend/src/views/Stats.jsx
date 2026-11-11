@@ -17,6 +17,68 @@ import {
   effortHistogram, isHardSet, HARD_RIR
 } from '../lib/effort.js'
 import { Button, Segmented, SelectRow } from '../components/ui.jsx'
+import PrBadge from '../components/PrBadge.jsx'
+import { computePersonalRecords, formatPrTime, formatPrPace } from '../lib/pr.js'
+
+// Personal Records section for cardio (Issue #66)
+function PersonalRecordsCard({ S }) {
+  const prData = computePersonalRecords(S.cardioActivities, S.personalRecords)
+  const records = prData.records || {}
+  const rows = [
+    { target: 1000, label: '1k', name: t('1k') },
+    { target: 1609.344, label: '1mi', name: t('1 mi') },
+    { target: 5000, label: '5k', name: t('5k') },
+    { target: 10000, label: '10k', name: t('10k') },
+    { target: 21097.5, label: 'half-marathon', name: t('Half Marathon') },
+    { target: 42195, label: 'marathon', name: t('Marathon') },
+  ]
+  const hasAnyRecord = rows.some(r => records[r.label])
+
+  return (
+    <div className="card">
+      <div className="row between" style={{ marginBottom: 8 }}>
+        <h2 style={{ margin: 0 }}>
+          {t('Personal records')} <span className="dim" style={{ textTransform: 'none', letterSpacing: 0 }}>· {t('cardio')}</span>
+        </h2>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        {rows.map(r => {
+          const rec = records[r.label]
+          return (
+            <div
+              key={r.label}
+              className="row between small"
+              style={{ padding: '8px 0', borderBottom: 'var(--hair) solid var(--sep)' }}
+            >
+              <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+                <span style={{ fontWeight: 600, minWidth: 42 }}>{r.name}</span>
+                {rec && <PrBadge rank={1} label="PR" />}
+              </div>
+              <div className="row" style={{ gap: 12, alignItems: 'center' }}>
+                {rec ? (
+                  <>
+                    <span style={{ fontWeight: 600 }}>{formatPrTime(rec.elapsedTime)}</span>
+                    <span className="dim">{formatPrPace(rec.elapsedTime, r.target, S.unit)}</span>
+                    {(rec.d || rec.startTime) && (
+                      <span className="muted">{fmtDate(rec.d || rec.startTime, true)}</span>
+                    )}
+                  </>
+                ) : (
+                  <span className="dim">—</span>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {!hasAnyRecord && (
+        <div className="muted small" style={{ marginTop: 10 }}>
+          {t('Complete a cardio activity to set personal records.')}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // Which muscles the training in a window actually hit — and, the point of the card,
 // which ones it keeps missing. Shading is relative within the window (lib/muscles.js).
@@ -255,6 +317,8 @@ export default function Stats() {
         </> : <div className="muted small">{t('Finish your first workout to see progress curves here.')}</div>}
       </div>
     </div>
+
+    <PersonalRecordsCard S={S} />
 
     {S.workouts.length > 0 && <>
       <div className="row between" style={{ marginBottom: 10 }}>
