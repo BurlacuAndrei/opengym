@@ -34,7 +34,9 @@ export const DEF = {
   // bounds live in lib/coach.js.
   coach: null,
   // Informed consent records for external features (Issue #39).
-  privacy: { consents: {} }
+  privacy: { consents: {} },
+  // Voice split cues (TTS with audio ducking, Issue #64). Default true.
+  voiceCues: true
 }
 const clone = o => JSON.parse(JSON.stringify(o))
 
