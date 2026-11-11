@@ -2,9 +2,11 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { effectiveRoutine, effectiveRoutineId, streakWeeks, lastBW, setsDoneActive } from '../lib/history.js'
-import { fmtNum, fmtDate, todayISO, isoOf, weekKey, DAYS } from '../lib/format.js'
+import { fmtNum, fmtDate, fmtDur, todayISO, isoOf, weekKey, DAYS } from '../lib/format.js'
+import { fmtDist, fmtPace, formatSpeed, defaultRateMetric } from '../lib/cardio-format.js'
 import { t, dateLocale } from '../lib/i18n.js'
 import { bwSheet, goalSheet, dayOverrideSheet, calendarSheet, startFlow, loadStarterPlan, bwDeltaColor } from '../sheets.jsx'
+import { openManualCardioSheet } from '../components/ManualCardioSheet.jsx'
 import LineChart from '../components/LineChart.jsx'
 import Icon from '../components/Icon.jsx'
 import { Button } from '../components/ui.jsx'
@@ -56,7 +58,10 @@ export default function Home() {
   const delta = bw && prevBW ? bw.w - prevBW.w : null
 
   const monday = new Date(today); monday.setDate(today.getDate() - ((today.getDay() + 6) % 7) + weekOffset * 7)
-  const doneDays = new Set(S.workouts.map(w => w.d))
+  const doneDays = new Set([
+    ...S.workouts.map(w => w.d),
+    ...(S.cardioActivities || []).map(c => c.d || (c.startTime ? (typeof c.startTime === 'string' && c.startTime.length >= 10 ? c.startTime.slice(0, 10) : isoOf(new Date(c.startTime))) : ''))
+  ])
   const strip = []
   for (let i = 0; i < 7; i++) {
     const d = new Date(monday); d.setDate(monday.getDate() + i)
@@ -72,6 +77,20 @@ export default function Home() {
   const wThisWeek = S.workouts.filter(w => weekKey(w.d) === weekKey(todayISO())).length
   const plannedPerWeek = Object.keys(S.week).filter(k => S.week[k]).length
   const bwPoints = S.bodyweight.slice(-30).map(b => ({ t: b.t || new Date(b.d).getTime(), y: b.w, d: b.d }))
+
+  const recentCardio = (S.cardioActivities || []).length
+    ? [...S.cardioActivities].sort((a, b) => {
+        const tb = b.startTime ? new Date(b.startTime).getTime() : 0
+        const ta = a.startTime ? new Date(a.startTime).getTime() : 0
+        return tb - ta
+      })[0]
+    : null
+  const cardioMetric = recentCardio ? defaultRateMetric(recentCardio.type) : null
+  const rateBadge = recentCardio
+    ? (cardioMetric === 'speed'
+        ? (recentCardio.avgSpeedKmh ? formatSpeed(recentCardio.avgSpeedKmh, S.unit) : null)
+        : (recentCardio.avgPaceSecKm ? fmtPace(recentCardio.avgPaceSecKm, S.unit) : null))
+    : null
 
   // today's session shown right under the week strip
   const onToday = () => { if (S.active) nav('/workout'); else if (routine) startFlow(routine.id); else dayOverrideSheet(todayISO()) }
@@ -152,6 +171,40 @@ export default function Home() {
         <div className="chart" style={{ marginTop: 8 }}><LineChart points={bwPoints} h={130} unit={S.unit} goal={S.targetW} /></div>
       </> : <div className="muted small">{t("No entries yet — log your weight to start the curve. It's also asked before every workout.")}</div>}
     </div>
+
+    {recentCardio && (
+      <div className="card tappable" style={{ cursor: 'pointer' }} onClick={() => openManualCardioSheet(recentCardio)}>
+        <div className="row between" style={{ marginBottom: 6 }}>
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <span className="lrow-i" style={{ background: 'var(--acc)' }}>
+              <Icon name={recentCardio.type === 'ride' ? 'bike' : 'figureRun'} />
+            </span>
+            <div>
+              <div className="lbl2">{t('Recent Activity')}</div>
+              <div className="ttl" style={{ textTransform: 'capitalize' }}>{t(recentCardio.type || 'Cardio')}</div>
+            </div>
+          </div>
+          <span className="dim small">{fmtDate(recentCardio.startTime ? (typeof recentCardio.startTime === 'string' && recentCardio.startTime.length >= 10 ? recentCardio.startTime.slice(0, 10) : isoOf(new Date(recentCardio.startTime))) : recentCardio.d, true)}</span>
+        </div>
+        <div className="row between" style={{ alignItems: 'baseline', marginTop: 10 }}>
+          <div className="row" style={{ gap: 14 }}>
+            {recentCardio.distanceM > 0 && (
+              <div>
+                <div className="big">{fmtDist(recentCardio.distanceM, S.unit)}</div>
+                <div className="muted small">{t('Distance')}</div>
+              </div>
+            )}
+            <div>
+              <div className="big">{fmtDur(recentCardio.durationMs)}</div>
+              <div className="muted small">{t('Duration')}</div>
+            </div>
+          </div>
+          {rateBadge && (
+            <span className="tag acc">{rateBadge}</span>
+          )}
+        </div>
+      </div>
+    )}
 
     <div className="card tappable" style={{ cursor: 'pointer' }} onClick={() => calendarSheet()}>
       <div className="row between">

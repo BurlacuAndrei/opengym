@@ -20,6 +20,7 @@ import { buildPlanBundle, parsePlan, mergePlan, printPlan } from './lib/plan-sha
 import { estimate1RM, best1RM, is1RMRecord, REP_CAP } from './lib/onerm.js'
 import { nextPrescription, applyPrescription, policyFor, defaultIncrement, POLICIES_FOR, POLICY_NAME, POLICY_DESC } from './lib/progression.js'
 import { MOBILE, shareExport } from './lib/mobile.js'
+import Calendar from './components/Calendar.jsx'
 
 const S = () => useStore.getState().S
 const update = (...a) => useStore.getState().update(...a)
@@ -713,45 +714,7 @@ function WorkoutDetail({ w, close }) {
 export const workoutDetailSheet = w => ui().openSheet(close => <WorkoutDetail w={w} close={close} />)
 
 /* ============================ calendar ============================ */
-function Calendar({ start, close }) {
-  const st = useStore(s => s.S)
-  const [cur, setCur] = useState(() => { const d = start ? new Date(start) : new Date(); d.setDate(1); return d })
-  const y = cur.getFullYear(), mo = cur.getMonth()
-  const byDay = {}
-  st.workouts.forEach(w => (byDay[w.d] = byDay[w.d] || []).push(w))
-  const startOffset = (new Date(y, mo, 1).getDay() + 6) % 7
-  const daysIn = new Date(y, mo + 1, 0).getDate()
-  const monthWs = st.workouts.filter(w => w.d.startsWith(y + '-' + String(mo + 1).padStart(2, '0')))
-  const monthVol = monthWs.reduce((a, w) => a + (w.vol || 0), 0)
-  const monthMs = monthWs.reduce((a, w) => a + Math.max(0, (w.end || w.start) - w.start), 0)
-  const cells = []
-  for (let i = 0; i < startOffset; i++) cells.push(<div key={'e' + i} />)
-  for (let d = 1; d <= daysIn; d++) {
-    const iso = y + '-' + String(mo + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0')
-    const ws = byDay[iso], effId = effectiveRoutineId(st, iso), ovr = st.dayPlan[iso] !== undefined
-    const dotCls = ws ? 'done' : ovr && effId ? 'ovr' : effId ? 'plan' : ''
-    cells.push(<button key={d} className={'cal-d' + (ws ? ' has' : '') + (iso === todayISO() ? ' today' : '')} onClick={() => {
-      if (!ws) { close(); dayOverrideSheet(iso); return }
-      if (ws.length === 1) { close(); workoutDetailSheet(ws[0]); return }
-      close(); ui().openSheet(c2 => <><h3>{fmtDate(iso, true)}</h3><div className="list">{ws.map(w => <WorkoutRow key={w.id} w={w} onClick={() => { c2(); workoutDetailSheet(w) }} />)}</div></>)
-    }}><span>{d}</span><i className={dotCls} /></button>)
-  }
-  return <>
-    <div className="row between" style={{ marginBottom: 2 }}>
-      <button className="iconbtn" onClick={() => setCur(new Date(y, mo - 1, 1))} aria-label="Previous month"><Icon name="chevronLeft" /></button>
-      <h3 style={{ margin: 0 }}>{t(MONTHS_LONG[mo])} {y}</h3>
-      <button className="iconbtn" onClick={() => setCur(new Date(y, mo + 1, 1))} aria-label="Next month"><Icon name="chevronRight" /></button>
-    </div>
-    <div className="small muted" style={{ textAlign: 'center' }}>{monthWs.length ? `${t(monthWs.length === 1 ? '{0} workout' : '{0} workouts', monthWs.length)} · ${fmtDur(monthMs)} · ${fmtVol(monthVol, st.unit)}` : t('No workouts this month')}</div>
-    <div className="cal-grid">{['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(l => <div key={l} className="cal-h">{t(l)}</div>)}{cells}</div>
-    <div className="cal-legend">
-      <span><i style={{ background: 'var(--acc)' }} />{t('Trained')}</span>
-      <span><i style={{ background: 'var(--label-3)' }} />{t('Planned')}</span>
-      <span><i style={{ background: 'var(--orange)' }} />{t('Rescheduled')}</span>
-    </div>
-    <div className="small dim" style={{ textAlign: 'center', marginTop: 10 }}>{t('Tap a trained day for details · tap any other day to plan a session')}</div>
-  </>
-}
+export { Calendar }
 export const calendarSheet = start => ui().openSheet(close => <Calendar start={start} close={close} />)
 
 /* shared small workout row (used in lists) */

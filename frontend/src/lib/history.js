@@ -195,8 +195,13 @@ export function supersetUnits(items) {
 export function unitOf(units, idx) { return units.find(u => u.includes(idx)) || [idx] }
 
 export function streakWeeks(S) {
-  if (!S.workouts.length) return 0
-  const weeks = new Set(S.workouts.map(w => weekKey(w.d)))
+  const workouts = Array.isArray(S?.workouts) ? S.workouts : []
+  const cardios = Array.isArray(S?.cardioActivities) ? S.cardioActivities : []
+  if (!workouts.length && !cardios.length) return 0
+  const weeks = new Set([
+    ...workouts.map(w => weekKey(w.d)),
+    ...cardios.map(c => weekKey(c.d || (c.startTime ? c.startTime.slice(0, 10) : todayISO())))
+  ])
   let streak = 0
   const cur = new Date()
   for (let i = 0; i < 520; i++) {
@@ -207,3 +212,88 @@ export function streakWeeks(S) {
   }
   return streak
 }
+
+/**
+ * Unified history helper: merges workouts and cardio activities into a single list
+ * sorted by date descending (newest first).
+ *
+ * Supports entry types: 'workout' | 'cardio'
+ *
+ * @param {Object} S - Application state
+ * @param {string|Object} [filterOrOpts='all'] - Filter ('all' | 'workout' | 'cardio') or options object
+ * @returns {Array<Object>} Sorted unified history entries
+ */
+export function unifiedHistory(S, filterOrOpts = 'all') {
+  if (!S) return []
+  const filter = typeof filterOrOpts === 'string' ? filterOrOpts : (filterOrOpts?.filter || 'all')
+
+  const items = []
+
+  if (filter === 'all' || filter === 'workout') {
+    const workouts = Array.isArray(S.workouts) ? S.workouts : []
+    for (const w of workouts) {
+      const d = w.d || (w.start ? isoOf(new Date(w.start)) : todayISO())
+      const ts = w.start || (d ? new Date(d + 'T12:00:00').getTime() : 0)
+      items.push({
+        ...w,
+        entryType: 'workout',
+        type: 'workout',
+        d,
+        date: d,
+        _ts: ts
+      })
+    }
+  }
+
+  if (filter === 'all' || filter === 'cardio') {
+    const cardios = Array.isArray(S.cardioActivities) ? S.cardioActivities : []
+    for (const c of cardios) {
+      const d = c.d || (c.startTime ? (typeof c.startTime === 'string' && c.startTime.length >= 10 ? c.startTime.slice(0, 10) : isoOf(new Date(c.startTime))) : todayISO())
+      const ts = c.startTime ? new Date(c.startTime).getTime() : (d ? new Date(d + 'T12:00:00').getTime() : 0)
+      items.push({
+        ...c,
+        entryType: 'cardio',
+        type: 'cardio',
+        cardioType: c.type || 'run',
+        sport: c.type || 'run',
+        d,
+        date: d,
+        _ts: ts
+      })
+    }
+  }
+
+  // Sort descending by date first, then timestamp within the same date
+  items.sort((a, b) => {
+    const dComp = (b.d || '').localeCompare(a.d || '')
+    if (dComp !== 0) return dComp
+    return (b._ts || 0) - (a._ts || 0)
+  })
+
+  if (typeof filterOrOpts === 'object' && filterOrOpts?.limit && filterOrOpts.limit > 0) {
+    return items.slice(0, filterOrOpts.limit)
+  }
+
+  return items
+}
+
+export const getUnifiedHistory = unifiedHistory
+
+/**
+ * Groups an array of history items (or state S) by date string (YYYY-MM-DD).
+ *
+ * @param {Array<Object>|Object} itemsOrS - Array of unified items or state object S
+ * @returns {Object} Map of ISO date string to array of history items
+ */
+export function groupHistoryByDate(itemsOrS) {
+  const items = Array.isArray(itemsOrS) ? itemsOrS : unifiedHistory(itemsOrS)
+  const map = {}
+  for (const item of items) {
+    const d = item.d || item.date
+    if (!d) continue
+    if (!map[d]) map[d] = []
+    map[d].push(item)
+  }
+  return map
+}
+

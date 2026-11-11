@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { modeOf, isTimed, fmtSec, setLabel, defaultConfig, buildSets, exLine, workoutVolume, effortOf, stepEffort, capEffort } from './history.js'
+import { modeOf, isTimed, fmtSec, setLabel, defaultConfig, buildSets, exLine, workoutVolume, effortOf, stepEffort, capEffort, unifiedHistory, getUnifiedHistory, groupHistoryByDate, streakWeeks } from './history.js'
 import { EXDB } from './exercises.js'
 
 // Real ids out of the shipped catalogue, so the body-part fallback is exercised for real.
@@ -319,3 +319,134 @@ describe('workoutVolume', () => {
     expect(workoutVolume(w)).toBe(600)
   })
 })
+
+describe('unifiedHistory & getUnifiedHistory (Issue #52)', () => {
+  const sampleWorkouts = [
+    { id: 'w1', d: '2026-11-08', start: 1762600000000, name: 'Leg Day', vol: 4500 },
+    { id: 'w2', d: '2026-11-10', start: 1762780000000, name: 'Upper Body', vol: 3200 }
+  ]
+  const sampleCardio = [
+    { id: 'c1', type: 'run', startTime: '2026-11-09T08:00:00Z', durationMs: 1800000, distanceM: 5000 },
+    { id: 'c2', type: 'ride', startTime: '2026-11-11T14:30:00Z', durationMs: 3600000, distanceM: 25000 }
+  ]
+
+  it('merges workouts and cardio activities and sorts by date descending', () => {
+    const S = { workouts: sampleWorkouts, cardioActivities: sampleCardio }
+    const history = unifiedHistory(S)
+
+    expect(history).toHaveLength(4)
+    // Newest first: c2 (Nov 11) -> w2 (Nov 10) -> c1 (Nov 9) -> w1 (Nov 8)
+    expect(history[0].id).toBe('c2')
+    expect(history[0].entryType).toBe('cardio')
+    expect(history[0].type).toBe('cardio')
+    expect(history[0].cardioType).toBe('ride')
+
+    expect(history[1].id).toBe('w2')
+    expect(history[1].entryType).toBe('workout')
+    expect(history[1].type).toBe('workout')
+
+    expect(history[2].id).toBe('c1')
+    expect(history[2].entryType).toBe('cardio')
+    expect(history[2].cardioType).toBe('run')
+
+    expect(history[3].id).toBe('w1')
+    expect(history[3].entryType).toBe('workout')
+  })
+
+  it('getUnifiedHistory is an alias for unifiedHistory', () => {
+    const S = { workouts: sampleWorkouts, cardioActivities: sampleCardio }
+    expect(getUnifiedHistory(S)).toEqual(unifiedHistory(S))
+  })
+
+  it('handles empty state gracefully', () => {
+    expect(unifiedHistory(null)).toEqual([])
+    expect(unifiedHistory({})).toEqual([])
+    expect(unifiedHistory({ workouts: [], cardioActivities: [] })).toEqual([])
+  })
+
+  it('filters by entry type: workout', () => {
+    const S = { workouts: sampleWorkouts, cardioActivities: sampleCardio }
+    const workoutsOnly = unifiedHistory(S, 'workout')
+    expect(workoutsOnly).toHaveLength(2)
+    expect(workoutsOnly.every(item => item.entryType === 'workout')).toBe(true)
+    expect(workoutsOnly[0].id).toBe('w2')
+    expect(workoutsOnly[1].id).toBe('w1')
+  })
+
+  it('filters by entry type: cardio', () => {
+    const S = { workouts: sampleWorkouts, cardioActivities: sampleCardio }
+    const cardioOnly = unifiedHistory(S, 'cardio')
+    expect(cardioOnly).toHaveLength(2)
+    expect(cardioOnly.every(item => item.entryType === 'cardio')).toBe(true)
+    expect(cardioOnly[0].id).toBe('c2')
+    expect(cardioOnly[1].id).toBe('c1')
+  })
+
+  it('filters by options object with filter and limit', () => {
+    const S = { workouts: sampleWorkouts, cardioActivities: sampleCardio }
+    const limited = unifiedHistory(S, { filter: 'all', limit: 2 })
+    expect(limited).toHaveLength(2)
+    expect(limited[0].id).toBe('c2')
+    expect(limited[1].id).toBe('w2')
+  })
+
+  it('handles fallback date formatting for cardio without startTime', () => {
+    const S = {
+      workouts: [],
+      cardioActivities: [{ id: 'c3', type: 'hike', d: '2026-11-05', durationMs: 1200000 }]
+    }
+    const history = unifiedHistory(S)
+    expect(history).toHaveLength(1)
+    expect(history[0].d).toBe('2026-11-05')
+    expect(history[0].entryType).toBe('cardio')
+  })
+})
+
+describe('groupHistoryByDate (Issue #52)', () => {
+  it('groups unified history items by ISO date string', () => {
+    const items = [
+      { id: '1', d: '2026-11-10', entryType: 'workout' },
+      { id: '2', d: '2026-11-10', entryType: 'cardio' },
+      { id: '3', d: '2026-11-09', entryType: 'workout' }
+    ]
+    const grouped = groupHistoryByDate(items)
+    expect(Object.keys(grouped)).toEqual(['2026-11-10', '2026-11-09'])
+    expect(grouped['2026-11-10']).toHaveLength(2)
+    expect(grouped['2026-11-09']).toHaveLength(1)
+  })
+
+  it('groups directly from state S', () => {
+    const S = {
+      workouts: [{ id: 'w1', d: '2026-11-10' }],
+      cardioActivities: [{ id: 'c1', startTime: '2026-11-10T15:00:00Z' }]
+    }
+    const grouped = groupHistoryByDate(S)
+    expect(grouped['2026-11-10']).toHaveLength(2)
+  })
+
+  it('handles empty input', () => {
+    expect(groupHistoryByDate([])).toEqual({})
+    expect(groupHistoryByDate(null)).toEqual({})
+  })
+})
+
+describe('streakWeeks with cardio activities (Issue #52)', () => {
+  it('includes active cardio days in weekly streak count', () => {
+    const now = new Date()
+    const isoOfDate = d => {
+      const pad = n => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    }
+
+    const thisWeekDate = new Date(now)
+    const lastWeekDate = new Date(now)
+    lastWeekDate.setDate(lastWeekDate.getDate() - 7)
+
+    const S = {
+      workouts: [{ id: 'w1', d: isoOfDate(thisWeekDate) }],
+      cardioActivities: [{ id: 'c1', startTime: lastWeekDate.toISOString() }]
+    }
+    expect(streakWeeks(S)).toBeGreaterThanOrEqual(2)
+  })
+})
+

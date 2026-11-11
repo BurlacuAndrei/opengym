@@ -8,10 +8,18 @@ export default function Heatmap({ S, onDay }) {
   useEffect(() => { if (wrapRef.current) wrapRef.current.scrollLeft = wrapRef.current.scrollWidth }, [])
 
   const agg = {}
-  S.workouts.forEach(w => {
+  ;(S.workouts || []).forEach(w => {
     const a = agg[w.d] = agg[w.d] || { n: 0, vol: 0, min: 0 }
     a.n++; a.vol += w.vol || 0
     a.min += Math.max(0, Math.round(((w.end || w.start) - w.start) / 60000))
+  })
+  ;(S.cardioActivities || []).forEach(c => {
+    const d = c.d || (c.startTime ? (typeof c.startTime === 'string' && c.startTime.length >= 10 ? c.startTime.slice(0, 10) : '') : '')
+    if (!d) return
+    const a = agg[d] = agg[d] || { n: 0, vol: 0, min: 0 }
+    a.n++
+    const durMin = Math.round((c.durationMs || 0) / 60000)
+    a.min += Math.max(0, durMin)
   })
   const mins = Object.values(agg).map(a => a.min).filter(v => v > 0).sort((a, b) => a - b)
   const q = p => (mins.length ? mins[Math.min(mins.length - 1, Math.floor(p * mins.length))] : 0)
@@ -37,7 +45,7 @@ export default function Heatmap({ S, onDay }) {
       const a = agg[key]
       const cls = 'hm-c l' + level(a) + (key === todayISO() ? ' today' : '') + (day > today ? ' future' : '')
       cells.push(<div key={d} className={cls}
-        title={key + (a ? ` · ${t(a.n === 1 ? '{0} workout' : '{0} workouts', a.n)} · ${a.min} min · ${fmtVol(a.vol, S.unit)}` : '')}
+        title={key + (a ? ` · ${t(a.n === 1 ? '{0} session' : '{0} sessions', a.n)} · ${a.min} min${a.vol ? ' · ' + fmtVol(a.vol, S.unit) : ''}` : '')}
         onClick={a ? () => onDay(key) : undefined} />)
     }
     cols.push(<div key={wk} className="hm-col">{cells}</div>)
