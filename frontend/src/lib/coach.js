@@ -19,7 +19,7 @@ export { canonicalPlan, hashPlan, planHash } from 'shared/coach/index.js'
 import { planHash } from 'shared/coach/index.js'
 
 // Bumping this re-prompts everyone: it means what we share, or who we share it with, changed.
-export const CONSENT_VERSION = 1
+export const CONSENT_VERSION = 2
 
 // Bounds. The whole state has to stay inside the server's 5 MB body limit, and a Coach log
 // that grows forever is exactly the kind of thing that eats it invisibly. Worst case here is
@@ -45,7 +45,7 @@ const coachOf = s => (s.coach = s.coach || emptyCoach())
 // server, or when a local BYOK key is configured.
 export const coachAvailable = (config, user, { demo, mobile, byok } = {}) =>
   mobile ? !!((config?.coach?.enabled && user) || byok) : demo ? true : !!(config?.coach?.enabled && user)
-export const hasConsent = S => !!S?.coach?.consent?.agreedAt && S.coach.consent.version === CONSENT_VERSION
+export const hasConsent = S => !!S?.coach?.consent?.agreedAt && Number(S?.coach?.consent?.version) >= CONSENT_VERSION
 
 /* ============================ plan fingerprint ============================ */
 // canonicalPlan, hashPlan, planHash are imported from shared/coach/

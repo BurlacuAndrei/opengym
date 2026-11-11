@@ -7,8 +7,8 @@ import {
 } from './coach.js'
 import { registerCustom } from './exercises.js'
 
-// The two runtimes share no build step, so the client's copy of the fingerprint logic is
-// checked against the server's actual source rather than against a transcribed expectation.
+// Checked against the shared pure modules and the server's actual source.
+import * as sharedCoach from 'shared/coach/index.js'
 import * as serverPayload from '../../../api/coach/payload.js'
 import { hashPlan as serverHashPlan } from '../../../api/coach/jobs.js'
 
@@ -59,6 +59,8 @@ describe('gating', () => {
   it('treats an older consent version as no consent', () => {
     expect(hasConsent(state())).toBe(true)
     expect(hasConsent(state({ coach: { consent: { agreedAt: 'x', version: 0 } } }))).toBe(false)
+    expect(hasConsent(state({ coach: { consent: { agreedAt: 'x', version: 1 } } }))).toBe(false)
+    expect(hasConsent(state({ coach: { consent: { agreedAt: 'x' } } }))).toBe(false)
     expect(hasConsent(state({ coach: {} }))).toBe(false)
   })
 })
@@ -69,6 +71,8 @@ describe('plan fingerprint', () => {
     expect(planHash(S)).toBe(planHash(state()))
     // A field the plan does not carry cannot move the hash.
     expect(planHash(state({ theme: 'light' }))).toBe(planHash(S))
+    expect(planHash(state({ coach: { ...state().coach, profile: { demographics: { age: 30 }, goals: ['hypertrophy'], targetEvent: { phase: 'peak' } } } }))).toBe(planHash(S))
+    expect(canonicalPlan(state({ coach: { ...state().coach, profile: { demographics: { age: 30 }, goals: ['hypertrophy'], targetEvent: { phase: 'peak' } } } }))).toEqual(canonicalPlan(S))
     // Everything the Coach can change does.
     const moved = state(); moved.routines[0].ex[0].sets = 4
     expect(planHash(moved)).not.toBe(planHash(S))
@@ -83,6 +87,9 @@ describe('plan fingerprint', () => {
   })
 
   it('agrees with the server, field for field', () => {
+    expect(canonicalPlan).toBe(sharedCoach.canonicalPlan)
+    expect(hashPlan).toBe(sharedCoach.hashPlan)
+    expect(planHash).toBe(sharedCoach.planHash)
     for (const S of [state(), state({ week: {} }), state({ routines: [] })]) {
       expect(canonicalPlan(S)).toEqual(serverPayload.canonicalPlan(S))
       expect(planHash(S)).toBe(serverHashPlan(serverPayload.canonicalPlan(S)))
@@ -379,3 +386,96 @@ describe('validation', () => {
     expect(validateProposal({ changes: [change()] })).toBe(true)
   })
 })
+
+describe('coach profile expansion & consent version bump (Issue #48)', () => {
+  it('bumps CONSENT_VERSION to 2 and prompts if version < 2 or absent', () => {
+    expect(CONSENT_VERSION).toBe(2)
+    // Valid consent version 2
+    expect(hasConsent(state())).toBe(true)
+    expect(hasConsent(state({ coach: { consent: { agreedAt: '2026-07-01T00:00:00Z', version: 2 } } }))).toBe(true)
+    // Absent consent or version
+    expect(hasConsent(null)).toBe(false)
+    expect(hasConsent({})).toBe(false)
+    expect(hasConsent(state({ coach: {} }))).toBe(false)
+    expect(hasConsent(state({ coach: { consent: null } }))).toBe(false)
+    expect(hasConsent(state({ coach: { consent: { agreedAt: '2026-07-01T00:00:00Z' } } }))).toBe(false)
+    // Older versions < 2
+    expect(hasConsent(state({ coach: { consent: { agreedAt: '2026-07-01T00:00:00Z', version: 0 } } }))).toBe(false)
+    expect(hasConsent(state({ coach: { consent: { agreedAt: '2026-07-01T00:00:00Z', version: 1 } } }))).toBe(false)
+  })
+
+  it('builds payload with demographics (age, sex, weight, height)', () => {
+    const S = state({
+      coach: {
+        ...state().coach,
+        profile: {
+          goal: 'strength',
+          demographics: { age: 29, sex: 'female', weight: 64, height: 168 }
+        }
+      }
+    })
+    const p = sharedCoach.build(S, 'test-uid', { kind: 'create' })
+    expect(p.coachProfile.demographics).toEqual({ age: 29, sex: 'female', weight: 64, height: 168 })
+  })
+
+  it('builds payload with multi-goals (array of goals)', () => {
+    const S = state({
+      coach: {
+        ...state().coach,
+        profile: {
+          goals: ['strength', 'hypertrophy', 'general']
+        }
+      }
+    })
+    const p = sharedCoach.build(S, 'test-uid', { kind: 'create' })
+    expect(p.coachProfile.goals).toEqual(['strength', 'hypertrophy', 'general'])
+    expect(p.coachProfile.goal).toBe('strength')
+  })
+
+  it('builds payload with targetEvent (date, kind, phase)', () => {
+    const S = state({
+      coach: {
+        ...state().coach,
+        profile: {
+          goal: 'endurance',
+          targetEvent: { date: '2026-11-20', kind: 'half-marathon', phase: 'peak' }
+        }
+      }
+    })
+    const p = sharedCoach.build(S, 'test-uid', { kind: 'create' })
+    expect(p.coachProfile.targetEvent).toEqual({ date: '2026-11-20', kind: 'half-marathon', phase: 'peak' })
+  })
+
+  it('handles absent optional profile fields cleanly as null / empty defaults', () => {
+    const S = state({
+      coach: {
+        ...state().coach,
+        profile: {
+          goal: 'general'
+        }
+      }
+    })
+    const p = sharedCoach.build(S, 'test-uid', { kind: 'create' })
+    expect(p.coachProfile.demographics).toBeNull()
+    expect(p.coachProfile.targetEvent).toBeNull()
+    expect(p.coachProfile.goals).toEqual(['general'])
+    expect(p.coachProfile.goal).toBe('general')
+  })
+
+  it('canonicalPlan and planHash remain invariant under profile expansion', () => {
+    const S = state()
+    const expanded = state({
+      coach: {
+        ...state().coach,
+        profile: {
+          demographics: { age: 35, sex: 'male', weight: 82, height: 182 },
+          goals: ['strength', 'fatloss'],
+          targetEvent: { date: '2026-12-15', kind: 'powerlifting meet', phase: 'build' }
+        }
+      }
+    })
+    expect(canonicalPlan(expanded)).toEqual(canonicalPlan(S))
+    expect(planHash(expanded)).toBe(planHash(S))
+  })
+})
+

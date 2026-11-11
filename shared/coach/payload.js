@@ -327,7 +327,8 @@ export function build(S, uid, opts = {}) {
       today: iso(new Date())
     },
     coachProfile: profile ? {
-      goal: profile.goal || null,
+      goal: profile.goal || (Array.isArray(profile.goals) && profile.goals.length ? profile.goals[0] : null),
+      goals: Array.isArray(profile.goals) ? profile.goals : (profile.goal ? [profile.goal] : []),
       experience: profile.experience || null,
       daysPerWeek: profile.daysPerWeek || null,
       preferredDays: profile.preferredDays || [],
@@ -337,6 +338,26 @@ export function build(S, uid, opts = {}) {
       likes: profile.likes || '',
       dislikes: profile.dislikes || '',
       notes: profile.notes || '',
+      demographics: (profile.demographics && typeof profile.demographics === 'object') ? {
+        age: profile.demographics.age ?? null,
+        sex: profile.demographics.sex ?? null,
+        weight: profile.demographics.weight ?? null,
+        height: profile.demographics.height ?? null,
+      } : (profile.age != null || profile.sex != null || profile.weight != null || profile.height != null) ? {
+        age: profile.age ?? null,
+        sex: profile.sex ?? null,
+        weight: profile.weight ?? null,
+        height: profile.height ?? null,
+      } : null,
+      targetEvent: (profile.targetEvent && typeof profile.targetEvent === 'object') ? {
+        date: profile.targetEvent.date || null,
+        kind: profile.targetEvent.kind || null,
+        phase: profile.targetEvent.phase || null,
+      } : (profile.targetEventDate || profile.targetEventKind || profile.targetEventPhase) ? {
+        date: profile.targetEventDate || null,
+        kind: profile.targetEventKind || null,
+        phase: profile.targetEventPhase || null,
+      } : null,
       ...(profile.modalities ? { modalities: profile.modalities } : profile.modality ? { modalities: [profile.modality] } : {})
     } : null,
     plan: cleanPlan(S)
