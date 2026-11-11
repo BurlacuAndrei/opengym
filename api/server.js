@@ -246,10 +246,16 @@ function readSession(req) {
   return user;
 }
 // Guard for /api/admin/* — resolves the caller and 401/403s if they aren't an admin.
-function requireAdmin(req, res) {
+export function requireAdmin(req, res) {
   const user = readSession(req);
   if (!user) { json(res, 401, { error: 'not signed in' }); return null; }
   if (!isAdmin(user)) { json(res, 403, { error: 'forbidden' }); return null; }
+  return user;
+}
+// Guard for authenticated endpoints — resolves caller and 401s if not signed in.
+export function requireUser(req, res) {
+  const user = readSession(req);
+  if (!user) { json(res, 401, { error: 'not signed in' }); return null; }
   return user;
 }
 function sessionCookie(user) {
@@ -307,6 +313,163 @@ function livePresence(uid) {
   return p;
 }
 setInterval(() => { for (const [k, v] of presence) if (Date.now() - v.updatedAt > PRESENCE_TTL) presence.delete(k); }, 30000).unref();
+
+/* ---------- tracks & routes storage ---------- */
+const safeUid = uid => String(uid || '').replace(/[^a-zA-Z0-9_-]/g, '');
+const isValidId = id => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(id);
+const userSubdir = (uid, type) => path.join(DATA, 'users', safeUid(uid), type);
+const MAX_TRACK_SIZE = +(process.env.MAX_TRACK_SIZE || 5 * 1024 * 1024) || (5 * 1024 * 1024);
+
+export function cleanupUserTracks(uid) {
+  try { fs.rmSync(path.join(DATA, 'users', safeUid(uid)), { recursive: true, force: true }); } catch {}
+}
+
+const handleGetList = async (req, res) => {
+  const user = requireUser(req, res);
+  if (!user) return;
+  const tracksDir = userSubdir(user.id, 'tracks');
+  const routesDir = userSubdir(user.id, 'routes');
+  const getIds = dir => {
+    try {
+      return fs.readdirSync(dir)
+        .filter(f => f.endsWith('.json') && !f.endsWith('.tmp'))
+        .map(f => f.slice(0, -5))
+        .sort();
+    } catch { return []; }
+  };
+  const tracks = getIds(tracksDir);
+  const routes = getIds(routesDir);
+  json(res, 200, { tracks, routes, trackIds: tracks, routeIds: routes });
+};
+
+const handleGetItem = async (req, res, type) => {
+  const user = requireUser(req, res);
+  if (!user) return;
+  const id = req.params?.id;
+  if (!isValidId(id)) return json(res, 400, { error: 'invalid id' });
+  const file = path.join(userSubdir(user.id, type), id + '.json');
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    json(res, 200, data);
+  } catch (err) {
+    if (err.code === 'ENOENT') return json(res, 404, { error: 'not found' });
+    json(res, 500, { error: 'failed to read' });
+  }
+};
+
+const handlePutItem = async (req, res, type) => {
+  const user = requireUser(req, res);
+  if (!user) return;
+  const id = req.params?.id;
+  if (!isValidId(id)) return json(res, 400, { error: 'invalid id' });
+
+  const cl = Number(req.headers['content-length']);
+  if (cl && cl > MAX_TRACK_SIZE) return json(res, 413, { error: 'payload too large' });
+
+  let body;
+  try {
+    body = await readBody(req);
+  } catch (err) {
+    if (err.message === 'body too large') return json(res, 413, { error: 'payload too large' });
+    return json(res, 400, { error: 'invalid JSON' });
+  }
+  if (!body || typeof body !== 'object') return json(res, 400, { error: 'JSON payload required' });
+
+  const serialized = JSON.stringify(body);
+  if (Buffer.byteLength(serialized) > MAX_TRACK_SIZE) {
+    return json(res, 413, { error: 'payload too large' });
+  }
+
+  const dir = userSubdir(user.id, type);
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const file = path.join(dir, id + '.json');
+    atomicWrite(file, serialized);
+    json(res, 200, { ok: true, id });
+  } catch {
+    json(res, 500, { error: 'failed to save' });
+  }
+};
+
+const handleDeleteItem = async (req, res, type) => {
+  const user = requireUser(req, res);
+  if (!user) return;
+  const id = req.params?.id;
+  if (!isValidId(id)) return json(res, 400, { error: 'invalid id' });
+  const file = path.join(userSubdir(user.id, type), id + '.json');
+  if (!fs.existsSync(file)) return json(res, 404, { error: 'not found' });
+  try {
+    fs.unlinkSync(file);
+    json(res, 200, { ok: true, id });
+  } catch {
+    json(res, 500, { error: 'failed to delete' });
+  }
+};
+
+const handlePrune = async (req, res, type) => {
+  const user = requireUser(req, res);
+  if (!user) return;
+
+  let body;
+  try {
+    body = await readBody(req);
+  } catch {
+    return json(res, 400, { error: 'invalid JSON' });
+  }
+
+  const dir = userSubdir(user.id, type);
+  if (!fs.existsSync(dir)) {
+    return json(res, 200, { ok: true, deleted: [], count: 0 });
+  }
+
+  const rawIds = Array.isArray(body?.ids) ? body.ids : (Array.isArray(body?.trackIds) ? body.trackIds : []);
+  const explicitIds = new Set(rawIds.filter(isValidId));
+
+  let cutoffTime = null;
+  const rawCutoff = body?.cutoff !== undefined ? body.cutoff : (body?.before !== undefined ? body.before : body?.olderThan);
+  if (rawCutoff !== undefined && rawCutoff !== null) {
+    if (typeof rawCutoff === 'number') {
+      cutoffTime = rawCutoff < 1e11 ? rawCutoff * 1000 : rawCutoff;
+    } else if (typeof rawCutoff === 'string') {
+      const parsed = Date.parse(rawCutoff);
+      if (!isNaN(parsed)) cutoffTime = parsed;
+    }
+  }
+
+  const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !f.endsWith('.tmp'));
+  const deleted = [];
+
+  for (const f of files) {
+    const id = f.slice(0, -5);
+    const file = path.join(dir, f);
+    let shouldDelete = explicitIds.has(id);
+
+    if (!shouldDelete && cutoffTime !== null) {
+      try {
+        const stat = fs.statSync(file);
+        let trackTime = stat.mtimeMs;
+        const content = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const t = content.recordedAt || content.start || content.startTime || content.timestamp || content.created || content.date || content.ts || content.time;
+        if (t) {
+          const parsed = typeof t === 'number' ? (t < 1e11 ? t * 1000 : t) : Date.parse(t);
+          if (!isNaN(parsed)) trackTime = parsed;
+        }
+        if (trackTime < cutoffTime) {
+          shouldDelete = true;
+        }
+      } catch {}
+    }
+
+    if (shouldDelete) {
+      try {
+        fs.unlinkSync(file);
+        deleted.push(id);
+      } catch {}
+    }
+  }
+
+  json(res, 200, { ok: true, deleted, count: deleted.length });
+};
 
 /* ---------- routes ---------- */
 const routes = {
@@ -650,7 +813,19 @@ const routes = {
   // Routes live in coach/routes.js and are handed the helpers above rather than importing
   // them: they are closures over db and SECRET, and passing them in keeps that module free of
   // a cycle. Every one of them is inert while the feature is unconfigured.
-  ...coachRoutes({ json, readBody, readSession, requireAdmin })
+  ...coachRoutes({ json, readBody, readSession, requireAdmin }),
+
+  /* ---------- tracks & routes ---------- */
+  'GET /api/tracks': handleGetList,
+  'GET /api/routes': handleGetList,
+  'POST /api/tracks/prune': async (req, res) => handlePrune(req, res, 'tracks'),
+  'POST /api/routes/prune': async (req, res) => handlePrune(req, res, 'routes'),
+  'GET /api/tracks/:id': async (req, res) => handleGetItem(req, res, 'tracks'),
+  'PUT /api/tracks/:id': async (req, res) => handlePutItem(req, res, 'tracks'),
+  'DELETE /api/tracks/:id': async (req, res) => handleDeleteItem(req, res, 'tracks'),
+  'GET /api/routes/:id': async (req, res) => handleGetItem(req, res, 'routes'),
+  'PUT /api/routes/:id': async (req, res) => handlePutItem(req, res, 'routes'),
+  'DELETE /api/routes/:id': async (req, res) => handleDeleteItem(req, res, 'routes')
 };
 
 /* ---------- Coach: boot recovery, notifications, scheduled reviews ---------- */
@@ -672,8 +847,18 @@ startCadence({ users: () => db.users, userNow });
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
-  const key = req.method + ' ' + url.pathname;
-  const handler = routes[key];
+  const cleanPath = url.pathname.length > 1 ? url.pathname.replace(/\/$/, '') : url.pathname;
+  const key = req.method + ' ' + cleanPath;
+  let handler = routes[key];
+  if (!handler) {
+    const match = cleanPath.match(/^\/api\/(tracks|routes)\/([^/]+)$/);
+    if (match) {
+      let id = match[2];
+      try { id = decodeURIComponent(id); } catch {}
+      req.params = { resource: match[1], id };
+      handler = routes[`${req.method} /api/${match[1]}/:id`];
+    }
+  }
   if (!handler) return json(res, 404, { error: 'not found' });
   try { await handler(req, res); }
   catch (e) {
