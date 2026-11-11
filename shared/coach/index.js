@@ -3,7 +3,7 @@ export {
 } from './library.js';
 
 export {
-  modeOf, canonicalPlan, hashPlan, planHash
+  modeOf, canonicalPlan, hashPlan, planHash, mergePlan
 } from './plan.js';
 
 export {
@@ -35,3 +35,11 @@ export {
   parseResponse,
   resolveProviderConfig
 } from './providers.js';
+
+export {
+  repairRunner,
+  testConnection,
+  formatRepairPrompt,
+  extractCallerText,
+  resolveEndpointFromBaseUrl
+} from './repair.js';
