@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { api } from '../lib/api.js'
-import { localTZ } from '../lib/format.js'
+import { localTZ, uid } from '../lib/format.js'
 import { registerCustom } from '../lib/exercises.js'
 import { DEMO, DEMO_SEEDED } from '../lib/demo.js'
 import { MOBILE, nativeLoad, nativeSave, syncReminder } from '../lib/mobile.js'
@@ -16,7 +16,7 @@ export const DEF = {
   unit: 'kg', restSec: 90, sound: true, keepAwake: true, lang: 'en',
   theme: 'dark', accent: 'lime', body: 'male', targetW: null,
   bodyweight: [], routines: [], week: {}, dayPlan: {},
-  exWeights: {}, workouts: [], active: null, customEx: [], gifSize: 'full',
+  exWeights: {}, workouts: [], cardioActivities: [], active: null, customEx: [], gifSize: 'full',
   // effort: which per-set effort scale is logged — 'none' | 'rir' | 'rpe'. null, not 'none', so
   // that a profile which never chose (loaded state is overlaid on DEF, on every path: local,
   // server pull, backup import) still falls back to the `showRir` boolean this replaced and
@@ -39,7 +39,99 @@ function loadState() {
   return clone(DEF)
 }
 
-const hasData = st => !!(st && ((st.workouts || []).length || (st.routines || []).length || (st.bodyweight || []).length))
+const hasData = st => !!(st && ((st.workouts || []).length || (st.routines || []).length || (st.bodyweight || []).length || (st.cardioActivities || []).length))
+
+export const CARDIO_TYPES = ['run', 'ride', 'hike', 'walk']
+
+export function validateCardioActivity(act) {
+  const errors = []
+  if (!act || typeof act !== 'object') {
+    return { valid: false, errors: ['Activity must be an object'] }
+  }
+
+  if (!act.type || !CARDIO_TYPES.includes(act.type)) {
+    errors.push(`Type must be one of: ${CARDIO_TYPES.join(', ')}`)
+  }
+
+  const dur = Number(act.durationMs)
+  if (act.durationMs == null || isNaN(dur) || dur <= 0 || !isFinite(dur)) {
+    errors.push('Duration must be greater than 0')
+  }
+
+  if (act.distanceM != null) {
+    const dist = Number(act.distanceM)
+    if (isNaN(dist) || dist < 0 || !isFinite(dist)) {
+      errors.push('Distance must be 0 or greater')
+    }
+  }
+
+  if (act.elevationGainM != null) {
+    const elev = Number(act.elevationGainM)
+    if (isNaN(elev) || elev < 0 || !isFinite(elev)) {
+      errors.push('Elevation gain must be 0 or greater')
+    }
+  }
+
+  if (act.rpe != null) {
+    const rpe = Number(act.rpe)
+    if (isNaN(rpe) || rpe < 1 || rpe > 10) {
+      errors.push('RPE must be between 1 and 10')
+    }
+  }
+
+  if (act.calories != null) {
+    const cal = Number(act.calories)
+    if (isNaN(cal) || cal < 0 || !isFinite(cal)) {
+      errors.push('Calories must be 0 or greater')
+    }
+  }
+
+  if (act.startTime != null) {
+    const ts = new Date(act.startTime).getTime()
+    if (isNaN(ts)) {
+      errors.push('Start time must be a valid date or timestamp')
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors
+  }
+}
+
+export function normalizeCardioActivity(act = {}) {
+  const durationMs = Math.max(0, Number(act.durationMs) || 0)
+  const distanceM = act.distanceM != null ? Math.max(0, Number(act.distanceM) || 0) : 0
+  const elevationGainM = act.elevationGainM != null ? Math.max(0, Number(act.elevationGainM) || 0) : 0
+
+  let avgPaceSecKm = act.avgPaceSecKm != null ? Number(act.avgPaceSecKm) : null
+  let avgSpeedKmh = act.avgSpeedKmh != null ? Number(act.avgSpeedKmh) : null
+
+  if (avgPaceSecKm == null && durationMs > 0 && distanceM > 0) {
+    avgPaceSecKm = durationMs / distanceM
+  }
+  if (avgSpeedKmh == null && durationMs > 0 && distanceM > 0) {
+    avgSpeedKmh = (distanceM * 3600) / durationMs
+  }
+
+  const type = CARDIO_TYPES.includes(act.type) ? act.type : 'run'
+  const startTime = act.startTime || new Date().toISOString()
+
+  return {
+    id: act.id || uid(),
+    type,
+    startTime,
+    durationMs,
+    distanceM,
+    elevationGainM,
+    avgPaceSecKm: avgPaceSecKm != null && isFinite(avgPaceSecKm) ? avgPaceSecKm : null,
+    avgSpeedKmh: avgSpeedKmh != null && isFinite(avgSpeedKmh) ? avgSpeedKmh : null,
+    calories: act.calories != null ? Math.max(0, Number(act.calories) || 0) : null,
+    rpe: act.rpe != null ? Math.min(10, Math.max(1, Number(act.rpe) || 0)) : null,
+    notes: act.notes != null ? String(act.notes) : '',
+    gearId: act.gearId || null
+  }
+}
 
 export const useStore = create((set, get) => {
   let pushTm = null
@@ -138,6 +230,56 @@ export const useStore = create((set, get) => {
     },
     getConsent(featureId) {
       return privacy.getConsent(get().S, featureId)
+    },
+
+    // Manual cardio activity logging (Issue #45)
+    logCardioActivity(act) {
+      const activity = normalizeCardioActivity(act)
+      get().update(s => {
+        if (!Array.isArray(s.cardioActivities)) s.cardioActivities = []
+        s.cardioActivities.push(activity)
+      })
+      return activity
+    },
+    updateCardioActivity(id, patch = {}) {
+      let updated = null
+      get().update(s => {
+        if (!Array.isArray(s.cardioActivities)) s.cardioActivities = []
+        const idx = s.cardioActivities.findIndex(a => a.id === id)
+        if (idx !== -1) {
+          const current = s.cardioActivities[idx]
+          const next = { ...current, ...patch }
+
+          const durationMs = next.durationMs != null ? Math.max(0, Number(next.durationMs) || 0) : 0
+          const distanceM = next.distanceM != null ? Math.max(0, Number(next.distanceM) || 0) : 0
+
+          if (patch.avgPaceSecKm === undefined && (patch.durationMs !== undefined || patch.distanceM !== undefined)) {
+            next.avgPaceSecKm = (distanceM > 0 && durationMs > 0) ? (durationMs / distanceM) : null
+          }
+          if (patch.avgSpeedKmh === undefined && (patch.durationMs !== undefined || patch.distanceM !== undefined)) {
+            next.avgSpeedKmh = (distanceM > 0 && durationMs > 0) ? ((distanceM * 3600) / durationMs) : null
+          }
+          if (patch.type && CARDIO_TYPES.includes(patch.type)) {
+            next.type = patch.type
+          }
+
+          s.cardioActivities[idx] = next
+          updated = next
+        }
+      })
+      return updated
+    },
+    deleteCardioActivity(id) {
+      let removed = null
+      get().update(s => {
+        if (!Array.isArray(s.cardioActivities)) s.cardioActivities = []
+        const idx = s.cardioActivities.findIndex(a => a.id === id)
+        if (idx !== -1) {
+          removed = s.cardioActivities[idx]
+          s.cardioActivities.splice(idx, 1)
+        }
+      })
+      return removed
     },
 
     isServerMode: () => Boolean(get().user && (!MOBILE || getServerUrl())),
@@ -416,3 +558,6 @@ export const reconcileOnConnect = (serverState) => useStore.getState().reconcile
 export const reconcileOnRegister = (choice, serverState) => useStore.getState().reconcileOnRegister(choice, serverState)
 export const disconnectServer = (opts) => useStore.getState().disconnectServer(opts)
 export const handleReauth = (newUser, serverData) => useStore.getState().handleReauth(newUser, serverData)
+export const logCardioActivity = (act) => useStore.getState().logCardioActivity(act)
+export const updateCardioActivity = (id, patch) => useStore.getState().updateCardioActivity(id, patch)
+export const deleteCardioActivity = (id) => useStore.getState().deleteCardioActivity(id)
