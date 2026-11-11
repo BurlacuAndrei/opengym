@@ -9,6 +9,8 @@
 import { run } from './spawn.js';
 import claude from './claude.js';
 import { CODEX_BIN } from './codex-cli.js';
+import httpAdapter, { createHttpAdapter } from './http.js';
+import { getProviderPreset } from '../../../shared/coach/providers.js';
 
 const CODEX_DISABLED_FEATURES = [
   'auth_elicitation', 'shell_tool', 'unified_exec', 'shell_snapshot', 'browser_use',
@@ -61,6 +63,11 @@ const fixture = {
   }
 };
 
-const ADAPTERS = { claude, codex, fixture };
-export const adapterFor = provider => ADAPTERS[provider] || null;
+const ADAPTERS = { claude, codex, fixture, http: httpAdapter };
+export const adapterFor = provider => {
+  if (ADAPTERS[provider]) return ADAPTERS[provider];
+  const preset = getProviderPreset(provider);
+  if (preset) return createHttpAdapter({ provider: preset.id });
+  return null;
+};
 export default ADAPTERS;

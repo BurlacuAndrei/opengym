@@ -23,3 +23,15 @@ export {
   CONTRACT, MAX_WEEKS, MAX_SESSIONS, DATA_CATEGORIES,
   stallCount, cleanPlan, librarySlice, reviewWindow, build
 } from './payload.js';
+
+export {
+  PROTOCOLS,
+  PROVIDER_PRESETS,
+  PROVIDER_ALIASES,
+  getProviderPreset,
+  isAllowedEndpoint,
+  validateEndpoint,
+  formatRequest,
+  parseResponse,
+  resolveProviderConfig
+} from './providers.js';
