@@ -95,14 +95,127 @@ export function cleanPlan(S) {
 }
 
 /* ---------- the library slice the model gets to choose from ---------- */
-export function librarySlice(S, equipment) {
-  const wanted = (equipment || []).map(x => String(x).toLowerCase());
-  const customs = (S?.customEx || []).map(c => ({ id: c.id, n: c.n, bp: c.bp, tg: null, eq: 'custom', custom: true }));
-  // No equipment stated (or "everything") ⇒ the whole catalogue. Filtering to nothing would
-  // leave the Coach unable to propose anything at all, which is a worse failure than a
-  // slightly larger payload.
-  const base = wanted.length ? LIBRARY.filter(e => wanted.includes((e.eq || '').toLowerCase())) : LIBRARY;
-  return [...customs, ...(base.length ? base : LIBRARY)];
+export const VALID_MODALITIES = ['strength', 'yoga', 'stretching', 'plyometrics', 'cardio'];
+
+/**
+ * Determine the modality/category tag of an exercise.
+ * Defaults to 'strength' when absent.
+ */
+export function exerciseCategory(e) {
+  if (e?.cat) return String(e.cat).toLowerCase().trim();
+  if (e?.category) return String(e.category).toLowerCase().trim();
+  if (e?.id && String(e.id).startsWith('yoga-')) return 'yoga';
+  if (e?.bp === 'cardio') return 'cardio';
+  const id = String(e?.id || '');
+  const n = String(e?.n || '').toLowerCase();
+  if (id.startsWith('fedb-')) {
+    const plyoWords = ['jump', 'bound', 'hop', 'swing', 'throw', 'sprint', 'hurdle', 'skier', 'tuck', 'toss', 'skip', 'leap', 'bounding', 'drop', 'slap', 'drill', 'push', 'step', 'thrust', 'kick', 'squeeze'];
+    if (plyoWords.some(w => n.includes(w))) return 'plyometrics';
+    return 'stretching';
+  }
+  if (n.includes('stretch')) return 'stretching';
+  return 'strength';
+}
+
+/**
+ * Extract target modalities from explicit argument or state S (intake/profile/plan/active).
+ * Defaults to ['strength'] when none are specified.
+ */
+export function extractModalities(S, modalities) {
+  const mods = new Set();
+  const add = (val) => {
+    if (!val) return;
+    if (Array.isArray(val)) {
+      val.forEach(v => add(v));
+    } else if (typeof val === 'string') {
+      val.split(/[,+]/).map(s => s.trim().toLowerCase()).filter(Boolean).forEach(m => mods.add(m));
+    }
+  };
+
+  if (modalities) {
+    add(modalities);
+  }
+  if (mods.size === 0 && S) {
+    add(S.modalities);
+    add(S.modality);
+    add(S.plan?.modalities);
+    add(S.plan?.modality);
+    add(S.coach?.profile?.modalities);
+    add(S.coach?.profile?.modality);
+    add(S.profile?.modalities);
+    add(S.profile?.modality);
+    add(S.intake?.modalities);
+    add(S.intake?.modality);
+
+    // Active session modalities
+    if (S.active) {
+      add(S.active.modality);
+      add(S.active.modalities);
+      (S.active.entries || []).forEach(en => {
+        if (en?.id) {
+          const ex = LIB_BY_ID.get(en.id) || (S.customEx || []).find(c => c.id === en.id);
+          if (ex) add(exerciseCategory(ex));
+        }
+      });
+    }
+
+    // Plan routines modalities
+    (S.routines || []).forEach(r => {
+      add(r.modality);
+      add(r.modalities);
+      add(r.cat);
+      add(r.category);
+      (r.ex || []).forEach(e => {
+        add(e.modality);
+        add(e.cat);
+        add(e.category);
+        if (e.id) {
+          const ex = LIB_BY_ID.get(e.id) || (S.customEx || []).find(c => c.id === e.id);
+          if (ex) add(exerciseCategory(ex));
+        }
+      });
+    });
+  }
+
+  if (mods.size === 0) {
+    return ['strength'];
+  }
+  return Array.from(mods);
+}
+
+export function librarySlice(S, equipment, modalities) {
+  let equip = equipment;
+  let mods = modalities;
+  if (equipment && typeof equipment === 'object' && !Array.isArray(equipment)) {
+    equip = equipment.equipment;
+    mods = equipment.modalities ?? modalities;
+  }
+
+  const wantedEquip = (Array.isArray(equip) ? equip : equip ? [equip] : []).map(x => String(x).toLowerCase().trim()).filter(Boolean);
+  const targetMods = extractModalities(S, mods);
+
+  // Filter customs by modality (customs without category default to 'strength')
+  const customs = (S?.customEx || [])
+    .filter(c => targetMods.includes(exerciseCategory(c)))
+    .map(c => ({ id: c.id, n: c.n, bp: c.bp, tg: null, eq: 'custom', custom: true, ...(c.cat ? { cat: c.cat } : c.category ? { category: c.category } : {}) }));
+
+  // 1. Modality pool
+  let modPool = LIBRARY.filter(e => targetMods.includes(exerciseCategory(e)));
+  if (!modPool.length) {
+    modPool = LIBRARY.filter(e => exerciseCategory(e) === 'strength');
+    if (!modPool.length) modPool = LIBRARY;
+  }
+
+  // 2. Equipment filter on modality pool
+  // No equipment stated (or "everything") ⇒ the whole modality catalogue.
+  let base = wantedEquip.length ? modPool.filter(e => wantedEquip.includes((e.eq || '').toLowerCase())) : modPool;
+
+  // Fallback if equipment nobody has yields 0 matches
+  if (!base.length) {
+    base = modPool.length ? modPool : LIBRARY;
+  }
+
+  return [...customs, ...base];
 }
 export { libraryHas, libraryName, LIBRARY, canonicalPlan };
 
@@ -223,7 +336,8 @@ export function build(S, uid, opts = {}) {
       limitations: profile.limitations || '',
       likes: profile.likes || '',
       dislikes: profile.dislikes || '',
-      notes: profile.notes || ''
+      notes: profile.notes || '',
+      ...(profile.modalities ? { modalities: profile.modalities } : profile.modality ? { modalities: [profile.modality] } : {})
     } : null,
     plan: cleanPlan(S)
   };
@@ -234,6 +348,8 @@ export function build(S, uid, opts = {}) {
     .flatMap(e => (e.decisions || []).filter(d => d.status === 'rejected').map(d => ({ type: d.type, why: d.why })))
     .slice(-15);
   if (declined.length) p.previouslyDeclined = declined;
+
+  const activeModalities = opts.modalities || opts.intake?.modalities || profile?.modalities || opts.modality || profile?.modality;
 
   if (opts.kind === 'review') {
     const workouts = reviewWindow(S, coach.lastReview?.at ? String(coach.lastReview.at).slice(0, 10) : null);
@@ -248,9 +364,9 @@ export function build(S, uid, opts = {}) {
       series: (S?.bodyweight || []).filter(b => !p.window.from || b.d >= p.window.from).map(b => ({ d: b.d, w: b.w }))
     };
     if (opts.note) p.userNote = String(opts.note).slice(0, 1000);
-    p.library = librarySlice(S, profile?.equipment);
+    p.library = librarySlice(S, profile?.equipment, activeModalities);
   } else {
-    p.library = librarySlice(S, profile?.equipment);
+    p.library = librarySlice(S, profile?.equipment, activeModalities);
     // Creation for a returning user: what they have actually handled, so proposed baselines
     // start from evidence rather than optimism (B2/FR-20).
     const best = {};
