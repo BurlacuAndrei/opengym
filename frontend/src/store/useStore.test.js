@@ -1643,4 +1643,101 @@ describe('useStore', () => {
       toastSpy.mockRestore()
     })
   })
+
+  describe('Issue #47: week and dayPlan session arrays with backward-compatible migration', () => {
+    it('migrates legacy string week[d] and dayPlan[date] to session arrays on load', async () => {
+      const legacyState = {
+        unit: 'kg',
+        week: { 1: 'routine-push', 3: 'routine-pull' },
+        dayPlan: { '2026-11-12': 'routine-push', '2026-11-13': 'rest' }
+      }
+      storage.setItem('gym_state_v1', JSON.stringify(legacyState))
+
+      vi.resetModules()
+      const mod = await import('./useStore.js')
+      const store = mod.useStore.getState()
+
+      expect(store.S.week[1]).toEqual(['routine-push'])
+      expect(store.S.week[3]).toEqual(['routine-pull'])
+      expect(store.S.dayPlan['2026-11-12']).toEqual(['routine-push'])
+      expect(store.S.dayPlan['2026-11-13']).toEqual(['rest'])
+    })
+
+    it('supports multiple sessions per day in week and dayPlan', () => {
+      const store = useStore.getState()
+
+      // Multi-session via setWeekPlan
+      store.setWeekPlan(1, ['routine-a', 'cardio-run'])
+      expect(useStore.getState().S.week[1]).toEqual(['routine-a', 'cardio-run'])
+
+      // Multi-session via setDayPlan
+      store.setDayPlan('2026-11-15', ['routine-b', 'yoga-stretch'])
+      expect(useStore.getState().S.dayPlan['2026-11-15']).toEqual(['routine-b', 'yoga-stretch'])
+    })
+
+    it('accessors getWeekPlan and getDayPlan return arrays for both string and array inputs', () => {
+      const store = useStore.getState()
+
+      // Direct state mutation with legacy strings
+      useStore.setState({
+        S: {
+          ...store.S,
+          week: { 2: 'legacy-routine' },
+          dayPlan: { '2026-11-14': 'legacy-day' }
+        }
+      })
+
+      expect(useStore.getState().getWeekPlan(2)).toEqual(['legacy-routine'])
+      expect(useStore.getState().getDayPlan('2026-11-14')).toEqual(['legacy-day'])
+      expect(useStore.getState().getWeekPlan(0)).toEqual([])
+      expect(useStore.getState().getDayPlan('2026-11-20')).toEqual([])
+    })
+
+    it('setWeekPlan and setDayPlan normalize single strings and delete on empty/rest', () => {
+      const store = useStore.getState()
+
+      // String normalization on set
+      store.setWeekPlan(5, 'single-routine')
+      expect(useStore.getState().S.week[5]).toEqual(['single-routine'])
+
+      store.setDayPlan('2026-11-16', 'single-routine')
+      expect(useStore.getState().S.dayPlan['2026-11-16']).toEqual(['single-routine'])
+
+      // Clearing / empty
+      store.setWeekPlan(5, '')
+      expect(useStore.getState().S.week[5]).toBeUndefined()
+
+      store.setDayPlan('2026-11-16', [])
+      expect(useStore.getState().S.dayPlan['2026-11-16']).toBeUndefined()
+    })
+
+    it('update and persist automatically normalize legacy string assignments', () => {
+      const store = useStore.getState()
+
+      store.update(s => {
+        s.week[6] = 'assigned-string'
+        s.dayPlan['2026-11-18'] = 'day-assigned-string'
+      })
+
+      expect(useStore.getState().S.week[6]).toEqual(['assigned-string'])
+      expect(useStore.getState().S.dayPlan['2026-11-18']).toEqual(['day-assigned-string'])
+    })
+
+    it('exports pure helper functions getSessions, getFirstSession, normalizeSchedule, and migrateSchedule', async () => {
+      const mod = await import('./useStore.js')
+      expect(mod.getSessions('r1')).toEqual(['r1'])
+      expect(mod.getSessions(['r1', 'r2'])).toEqual(['r1', 'r2'])
+      expect(mod.getSessions(null)).toEqual([])
+      expect(mod.getFirstSession('r1')).toBe('r1')
+      expect(mod.getFirstSession(['r1', 'r2'])).toBe('r1')
+      expect(mod.getFirstSession([])).toBe(null)
+
+      const normalized = mod.normalizeSchedule({ 1: 'r1', 2: ['r2', 'r3'], 3: '' })
+      expect(normalized).toEqual({ 1: ['r1'], 2: ['r2', 'r3'] })
+
+      const migrated = mod.migrateSchedule({ week: { 0: 'r0' }, dayPlan: { '2026-11-10': 'rd' } })
+      expect(migrated.week[0]).toEqual(['r0'])
+      expect(migrated.dayPlan['2026-11-10']).toEqual(['rd'])
+    })
+  })
 })

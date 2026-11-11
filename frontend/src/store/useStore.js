@@ -38,10 +38,59 @@ export const DEF = {
 }
 const clone = o => JSON.parse(JSON.stringify(o))
 
+/**
+ * Normalizes a session value or array into an array of non-empty string IDs (Issue #47).
+ * Transparently accepts string ('r1'), array (['r1', 'r2']), or null/undefined.
+ */
+export function getSessions(val) {
+  if (Array.isArray(val)) return val.filter(x => typeof x === 'string' && x.trim() !== '')
+  if (typeof val === 'string' && val.trim() !== '') return [val]
+  return []
+}
+
+/**
+ * Accessor for the first session of a day, transparently handling string and array formats.
+ */
+export function getFirstSession(val) {
+  if (Array.isArray(val)) return val[0] || null
+  if (typeof val === 'string' && val.trim() !== '') return val
+  return null
+}
+
+/**
+ * Normalizes an entire week or dayPlan schedule mapping to session arrays.
+ */
+export function normalizeSchedule(schedule) {
+  if (!schedule || typeof schedule !== 'object') return {}
+  const out = {}
+  for (const [k, v] of Object.entries(schedule)) {
+    const sessions = getSessions(v)
+    if (sessions.length > 0) out[k] = sessions
+  }
+  return out
+}
+
+/**
+ * Automatically migrates legacy string week[d] and dayPlan[date] to session arrays in-place (Issue #47).
+ */
+export function migrateSchedule(S) {
+  if (!S || typeof S !== 'object') return S
+  if (S.week && typeof S.week === 'object') {
+    S.week = normalizeSchedule(S.week)
+  }
+  if (S.dayPlan && typeof S.dayPlan === 'object') {
+    S.dayPlan = normalizeSchedule(S.dayPlan)
+  }
+  return S
+}
+
 function loadState() {
   try {
     const raw = localStorage.getItem(KEY)
-    if (raw) return Object.assign(clone(DEF), JSON.parse(raw))
+    if (raw) {
+      const state = Object.assign(clone(DEF), JSON.parse(raw))
+      return migrateSchedule(state)
+    }
   } catch (e) { /* ignore */ }
   return clone(DEF)
 }
@@ -152,6 +201,7 @@ export const useStore = create((set, get) => {
   }
 
   const persist = (S, push = true) => {
+    migrateSchedule(S)
     S._ts = Date.now()
     registerCustom(S.customEx)
     localStorage.setItem(KEY, JSON.stringify(S))
@@ -220,6 +270,36 @@ export const useStore = create((set, get) => {
       persist(S, push)
     },
     replaceState(S, push = false) { persist(clone(S), push) },
+
+    // Session array accessors and mutators (Issue #47)
+    getDayPlan(date) {
+      return getSessions(get().S?.dayPlan?.[date])
+    },
+    getWeekPlan(day) {
+      return getSessions(get().S?.week?.[day])
+    },
+    setDayPlan(date, val) {
+      get().update(s => {
+        if (!s.dayPlan) s.dayPlan = {}
+        const sessions = getSessions(val)
+        if (sessions.length === 0) {
+          delete s.dayPlan[date]
+        } else {
+          s.dayPlan[date] = sessions
+        }
+      })
+    },
+    setWeekPlan(day, val) {
+      get().update(s => {
+        if (!s.week) s.week = {}
+        const sessions = getSessions(val)
+        if (sessions.length === 0) {
+          delete s.week[day]
+        } else {
+          s.week[day] = sessions
+        }
+      })
+    },
 
     // Privacy and consent management (Issue #39)
     grantConsent(featureId, details = {}) {

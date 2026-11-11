@@ -7,12 +7,63 @@ export const modeOf = (cfg, ex) => {
 };
 
 /**
+ * Normalizes a single session value or session array into an array of routine/session IDs.
+ * Transparently accepts string ('r1'), array of strings (['r1', 'r2']), or null/undefined.
+ */
+export function getSessions(val) {
+  if (Array.isArray(val)) return val.filter(x => typeof x === 'string' && x.trim() !== '');
+  if (typeof val === 'string' && val.trim() !== '') return [val];
+  return [];
+}
+
+/**
+ * Accessor for the primary or first session of a day, transparently handling string and array formats.
+ */
+export function getFirstSession(val) {
+  if (Array.isArray(val)) return val[0] || null;
+  if (typeof val === 'string' && val.trim() !== '') return val;
+  return null;
+}
+
+/**
+ * Normalizes an entire week or dayPlan schedule mapping to session arrays.
+ */
+export function normalizeSchedule(schedule) {
+  if (!schedule || typeof schedule !== 'object') return {};
+  const out = {};
+  for (const [k, v] of Object.entries(schedule)) {
+    const sessions = getSessions(v);
+    if (sessions.length > 0) out[k] = sessions;
+  }
+  return out;
+}
+
+/**
+ * Accessor helper to retrieve sessions for a given date in dayPlan.
+ */
+export function getDaySessions(planOrState, date, field = 'dayPlan') {
+  return getSessions(planOrState?.[field]?.[date]);
+}
+
+/**
+ * Accessor helper to retrieve sessions for a given weekday in week.
+ */
+export function getWeekSessions(planOrState, day) {
+  return getSessions(planOrState?.week?.[day]);
+}
+
+/**
  * The plan reduced to exactly the fields that decide whether it has *changed* — mode-aware,
  * with every absent value written out as a zero so "no weight" and "0 kg" cannot hash apart.
  */
 export function canonicalPlan(S) {
   const custom = new Map((S?.customEx || []).map(c => [c.id, c]));
   const exOf = id => LIB_BY_ID.get(id) || custom.get(id);
+  const weekObj = {};
+  for (const d of [1, 2, 3, 4, 5, 6, 0]) {
+    const sessions = getSessions(S?.week?.[d]);
+    if (sessions.length > 0) weekObj[d] = sessions;
+  }
   return {
     routines: (S?.routines || []).map(r => ({
       id: r.id, name: r.name || '', prog: r.prog || '',
@@ -29,7 +80,7 @@ export function canonicalPlan(S) {
         };
       })
     })),
-    week: Object.fromEntries([1, 2, 3, 4, 5, 6, 0].filter(d => S?.week?.[d]).map(d => [d, S.week[d]]))
+    week: weekObj
   };
 }
 
@@ -44,7 +95,11 @@ export function hashPlan(plan) {
     routines: (plan?.routines || []).map(r => [r.id, r.name, r.prog, (r.ex || []).map(e =>
       [e.id, e.mode, e.sets, e.reps, e.sec, e.min, e.speed, e.weight, e.prog, e.inc, e.repsMin, e.sg].join(':')
     )]),
-    week: Object.keys(plan?.week || {}).sort().map(k => k + '=' + plan.week[k])
+    week: Object.keys(plan?.week || {}).sort().map(k => {
+      const val = plan.week[k];
+      const s = Array.isArray(val) ? val.join(',') : (val != null ? String(val) : '');
+      return k + '=' + s;
+    })
   });
   let h1 = 0x811c9dc5, h2 = 0x01000193;
   for (let i = 0; i < canon.length; i++) {
@@ -295,7 +350,12 @@ export function mergePlan(plan, review, { customEx = [] } = {}) {
           if (id) {
             plan.routines = plan.routines.filter(rt => rt.id !== id);
             for (const d of Object.keys(plan.week)) {
-              if (plan.week[d] === id) delete plan.week[d];
+              if (Array.isArray(plan.week[d])) {
+                plan.week[d] = plan.week[d].filter(rid => rid !== id);
+                if (plan.week[d].length === 0) delete plan.week[d];
+              } else if (plan.week[d] === id) {
+                delete plan.week[d];
+              }
             }
           }
           break;
@@ -311,10 +371,11 @@ export function mergePlan(plan, review, { customEx = [] } = {}) {
         case 'week': {
           const d = target.weekday != null ? target.weekday : c.weekday;
           if (d != null) {
-            if (c.after == null || c.after === 'rest') {
+            const sessions = getSessions(c.after);
+            if (sessions.length === 0 || c.after === 'rest') {
               delete plan.week[d];
             } else {
-              plan.week[d] = c.after;
+              plan.week[d] = sessions;
             }
           }
           break;
@@ -335,7 +396,14 @@ export function mergePlan(plan, review, { customEx = [] } = {}) {
       plan.routines.push({ ...r, ex: [...(r.ex || [])] });
     }
     if (review.week) {
-      Object.assign(plan.week, review.week);
+      for (const [d, val] of Object.entries(review.week)) {
+        const sessions = getSessions(val);
+        if (sessions.length === 0 || val === 'rest') {
+          delete plan.week[d];
+        } else {
+          plan.week[d] = sessions;
+        }
+      }
     }
   }
 
