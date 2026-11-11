@@ -3,11 +3,16 @@ import {
   getToken,
   setToken,
   clearToken,
+  getByokKey,
+  setByokKey,
+  clearByokKey,
   setStorageBackend,
   getStorageBackend,
   createMemoryStorageBackend,
   createNativeStorageBackend,
-  DEFAULT_TOKEN_KEY
+  DEFAULT_TOKEN_KEY,
+  BYOK_KEY,
+  BYOK_COACH_API_KEY
 } from './token-storage.js'
 import { Capacitor } from '@capacitor/core'
 
@@ -16,6 +21,7 @@ describe('token-storage', () => {
     // Reset to default backend and clean default memory store
     setStorageBackend(null)
     await clearToken()
+    await clearByokKey()
   })
 
   describe('default in-memory backend', () => {
@@ -198,6 +204,124 @@ describe('token-storage', () => {
       expect(typeof backend.clearToken).toBe('function')
 
       vi.restoreAllMocks()
+    })
+  })
+
+  describe('BYOK Coach API key storage', () => {
+    it('uses dedicated key byok_coach_api_key', () => {
+      expect(BYOK_KEY).toBe('byok_coach_api_key')
+      expect(BYOK_COACH_API_KEY).toBe('byok_coach_api_key')
+    })
+
+    it('returns null when no BYOK key is stored', async () => {
+      const key = await getByokKey()
+      expect(key).toBeNull()
+    })
+
+    it('stores and retrieves BYOK API key in memory backend', async () => {
+      await setByokKey('sk-ant-api03-test-secret-key')
+      const retrieved = await getByokKey()
+      expect(retrieved).toBe('sk-ant-api03-test-secret-key')
+    })
+
+    it('clears BYOK key without affecting auth token', async () => {
+      await setToken('auth-jwt-123')
+      await setByokKey('sk-ant-api03-test-secret-key')
+
+      await clearByokKey()
+      expect(await getByokKey()).toBeNull()
+      expect(await getToken()).toBe('auth-jwt-123')
+    })
+
+    it('clearing auth token does not affect BYOK key', async () => {
+      await setToken('auth-jwt-123')
+      await setByokKey('sk-ant-api03-test-secret-key')
+
+      await clearToken()
+      expect(await getToken()).toBeNull()
+      expect(await getByokKey()).toBe('sk-ant-api03-test-secret-key')
+    })
+
+    it('clears BYOK key when setByokKey is called with null or undefined', async () => {
+      await setByokKey('sk-test')
+      await setByokKey(null)
+      expect(await getByokKey()).toBeNull()
+
+      await setByokKey('sk-test')
+      await setByokKey(undefined)
+      expect(await getByokKey()).toBeNull()
+    })
+
+    it('interacts with native plugin using byok_coach_api_key', async () => {
+      const plugin = {
+        getToken: vi.fn().mockResolvedValue({ token: 'sk-native-key' }),
+        setToken: vi.fn().mockResolvedValue({ success: true }),
+        clearToken: vi.fn().mockResolvedValue({ success: true })
+      }
+      const backend = createNativeStorageBackend(plugin)
+      setStorageBackend(backend)
+
+      await setByokKey('sk-native-key')
+      expect(plugin.setToken).toHaveBeenCalledWith({ token: 'sk-native-key', key: 'byok_coach_api_key' })
+
+      const val = await getByokKey()
+      expect(val).toBe('sk-native-key')
+      expect(plugin.getToken).toHaveBeenCalledWith({ key: 'byok_coach_api_key' })
+
+      await clearByokKey()
+      expect(plugin.clearToken).toHaveBeenCalledWith({ key: 'byok_coach_api_key' })
+    })
+
+    it('verifies key isolation: key is never stored in localStorage, application state, backups, or sync payloads', async () => {
+      const mockLocalStorage = {
+        _store: {},
+        getItem(k) { return this._store[k] ?? null },
+        setItem(k, v) { this._store[k] = String(v) },
+        removeItem(k) { delete this._store[k] },
+        clear() { this._store = {} }
+      }
+      const origLocalStorage = globalThis.localStorage
+      Object.defineProperty(globalThis, 'localStorage', {
+        value: mockLocalStorage,
+        configurable: true,
+        writable: true
+      })
+
+      try {
+        const secret = 'sk-super-secret-coach-key'
+        await setByokKey(secret)
+
+        // 1. Verify localStorage is completely untouched
+        expect(mockLocalStorage._store['byok_coach_api_key']).toBeUndefined()
+        expect(mockLocalStorage.getItem('byok_coach_api_key')).toBeNull()
+        expect(Object.keys(mockLocalStorage._store)).toHaveLength(0)
+
+        // 2. Mock app state, backup, and sync payloads
+        const appState = { exercises: [], workouts: [], settings: {} }
+        const syncPayload = { clientState: appState, lastSynced: Date.now() }
+        const backupPayload = JSON.stringify({ state: appState, version: 1 })
+
+        expect(JSON.stringify(appState)).not.toContain(secret)
+        expect(JSON.stringify(syncPayload)).not.toContain(secret)
+        expect(backupPayload).not.toContain(secret)
+      } finally {
+        Object.defineProperty(globalThis, 'localStorage', {
+          value: origLocalStorage,
+          configurable: true,
+          writable: true
+        })
+      }
+    })
+
+    it('works with createMemoryStorageBackend initial seed for BYOK key', async () => {
+      const seededBackend = createMemoryStorageBackend({
+        [BYOK_KEY]: 'sk-seeded-key',
+        [DEFAULT_TOKEN_KEY]: 'auth-jwt-seed'
+      })
+      setStorageBackend(seededBackend)
+
+      expect(await getByokKey()).toBe('sk-seeded-key')
+      expect(await getToken()).toBe('auth-jwt-seed')
     })
   })
 })

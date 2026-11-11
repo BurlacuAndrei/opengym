@@ -1,6 +1,8 @@
 import { Capacitor, registerPlugin } from '@capacitor/core'
 
 export const DEFAULT_TOKEN_KEY = 'auth_token'
+export const BYOK_KEY = 'byok_coach_api_key'
+export const BYOK_COACH_API_KEY = BYOK_KEY
 
 export function createMemoryStorageBackend(initial = {}) {
   const store = new Map(Object.entries(initial))
@@ -77,4 +79,16 @@ export async function setToken(token, key = DEFAULT_TOKEN_KEY) {
 
 export async function clearToken(key = DEFAULT_TOKEN_KEY) {
   return getStorageBackend().clearToken(key)
+}
+
+export async function getByokKey() {
+  return getToken(BYOK_KEY)
+}
+
+export async function setByokKey(key) {
+  return setToken(key, BYOK_KEY)
+}
+
+export async function clearByokKey() {
+  return clearToken(BYOK_KEY)
 }
