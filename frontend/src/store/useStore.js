@@ -9,6 +9,13 @@ import { openConflictDialog, openRegisterImportDialog } from '../components/Conf
 import { getServerUrl, clearServerConfig } from '../lib/server-config.js'
 import { clearToken } from '../lib/token-storage.js'
 import * as privacy from '../lib/privacy.js'
+import {
+  addGear as libAddGear,
+  updateGear as libUpdateGear,
+  retireGear as libRetireGear,
+  accumulateGearDistance as libAccumulateGearDistance,
+  setGearStore
+} from '../lib/gear.js'
 import { App as CapApp } from '@capacitor/app'
 
 const KEY = 'gym_state_v1'
@@ -16,7 +23,7 @@ export const DEF = {
   unit: 'kg', restSec: 90, sound: true, keepAwake: true, lang: 'en',
   theme: 'dark', accent: 'lime', body: 'male', targetW: null,
   bodyweight: [], routines: [], week: {}, dayPlan: {},
-  exWeights: {}, workouts: [], cardioActivities: [], active: null, customEx: [], gifSize: 'full',
+  exWeights: {}, workouts: [], cardioActivities: [], gear: [], active: null, customEx: [], gifSize: 'full',
   // effort: which per-set effort scale is logged — 'none' | 'rir' | 'rpe'. null, not 'none', so
   // that a profile which never chose (loaded state is overlaid on DEF, on every path: local,
   // server pull, backup import) still falls back to the `showRir` boolean this replaced and
@@ -39,7 +46,7 @@ function loadState() {
   return clone(DEF)
 }
 
-const hasData = st => !!(st && ((st.workouts || []).length || (st.routines || []).length || (st.bodyweight || []).length || (st.cardioActivities || []).length))
+const hasData = st => !!(st && ((st.workouts || []).length || (st.routines || []).length || (st.bodyweight || []).length || (st.cardioActivities || []).length || (st.gear || []).length))
 
 export const CARDIO_TYPES = ['run', 'ride', 'hike', 'walk']
 
@@ -239,7 +246,23 @@ export const useStore = create((set, get) => {
         if (!Array.isArray(s.cardioActivities)) s.cardioActivities = []
         s.cardioActivities.push(activity)
       })
+      if (activity.gearId && activity.distanceM > 0) {
+        libAccumulateGearDistance(activity.gearId, activity.distanceM, set, get)
+      }
       return activity
+    },
+    // Gear mileage tracking (Issue #54)
+    addGear(gear) {
+      return libAddGear(gear, set, get)
+    },
+    updateGear(id, patch) {
+      return libUpdateGear(id, patch, set, get)
+    },
+    retireGear(id) {
+      return libRetireGear(id, set, get)
+    },
+    accumulateGearDistance(gearId, distanceM) {
+      return libAccumulateGearDistance(gearId, distanceM, set, get)
     },
     updateCardioActivity(id, patch = {}) {
       let updated = null
@@ -561,3 +584,8 @@ export const handleReauth = (newUser, serverData) => useStore.getState().handleR
 export const logCardioActivity = (act) => useStore.getState().logCardioActivity(act)
 export const updateCardioActivity = (id, patch) => useStore.getState().updateCardioActivity(id, patch)
 export const deleteCardioActivity = (id) => useStore.getState().deleteCardioActivity(id)
+setGearStore(useStore)
+export const addGear = (gear) => useStore.getState().addGear(gear)
+export const updateGear = (id, patch) => useStore.getState().updateGear(id, patch)
+export const retireGear = (id) => useStore.getState().retireGear(id)
+export const accumulateGearDistance = (gearId, distanceM) => useStore.getState().accumulateGearDistance(gearId, distanceM)
