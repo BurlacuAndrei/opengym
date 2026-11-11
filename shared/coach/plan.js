@@ -56,3 +56,288 @@ export function hashPlan(plan) {
 }
 
 export const planHash = S => hashPlan(canonicalPlan(S));
+
+/**
+ * Merge a review proposal, change-set, or plan bundle into a plan, treating custom exercises (customEx)
+ * as first-class exercises.
+ */
+export function mergePlan(plan, review, { customEx = [] } = {}) {
+  if (!plan) return plan;
+
+  plan.routines = plan.routines || [];
+  plan.week = plan.week || {};
+  plan.customEx = plan.customEx || [];
+
+  if (Array.isArray(customEx)) {
+    const existing = new Set(plan.customEx.map(c => (typeof c === 'string' ? c : c?.id)));
+    for (const c of customEx) {
+      const cid = typeof c === 'string' ? c : c?.id;
+      if (cid && !existing.has(cid)) {
+        plan.customEx.push(typeof c === 'string' ? { id: c, n: c, custom: true } : c);
+        existing.add(cid);
+      }
+    }
+  }
+
+  const ensureCustomRegistered = (id, fallbackName) => {
+    if (!id || typeof id !== 'string') return;
+    const isCustom = id.startsWith('cust_') || (Array.isArray(customEx) && customEx.some(x => (x?.id || x) === id));
+    if (!isCustom) return;
+    const found = plan.customEx.find(x => (x?.id || x) === id);
+    if (!found) {
+      const meta = (Array.isArray(customEx) ? customEx.find(x => (x?.id || x) === id) : null);
+      if (meta && typeof meta === 'object') {
+        plan.customEx.push({ ...meta });
+      } else {
+        plan.customEx.push({ id, n: fallbackName || id, custom: true });
+      }
+    }
+  };
+
+  const changes = Array.isArray(review)
+    ? review
+    : (review?.proposal?.changes || review?.changes);
+
+  if (Array.isArray(changes)) {
+    for (const c of changes) {
+      if (!c || typeof c !== 'object') continue;
+      const type = c.type;
+      const target = c.target || {};
+      const routineId = target.routineId || c.routineId;
+      const r = routineId ? plan.routines.find(rt => rt.id === routineId) : plan.routines[0];
+
+      switch (type) {
+        case 'add-exercise':
+        case 'add': {
+          if (!r) break;
+          r.ex = r.ex || [];
+          const a = c.after || {};
+          const exId = a.id || c.exId;
+          if (!exId) break;
+          const e = {
+            id: exId,
+            sets: a.sets ?? 3,
+            mode: a.mode ?? modeOf(a, LIB_BY_ID.get(exId))
+          };
+          if (e.mode === 'cardio') {
+            e.min = a.min ?? 20;
+            e.speed = a.speed ?? 8;
+          } else if (e.mode === 'time') {
+            e.sec = a.sec ?? 45;
+            if (a.weight > 0) e.weight = a.weight;
+          } else {
+            e.reps = a.reps ?? 10;
+            if (a.weight > 0) e.weight = a.weight;
+          }
+          if (a.prog) e.prog = a.prog;
+          if (a.inc > 0) e.inc = a.inc;
+          if (a.repsMin != null) e.repsMin = a.repsMin;
+          if (a.sg) e.sg = a.sg;
+
+          const pos = Number.isInteger(a.position) ? Math.min(a.position, r.ex.length) : r.ex.length;
+          r.ex.splice(pos, 0, e);
+          ensureCustomRegistered(exId, a.name);
+          break;
+        }
+
+        case 'swap-exercise':
+        case 'replace':
+        case 'swap': {
+          if (!r || !r.ex) break;
+          const targetExId = target.exId || c.targetExId || c.before?.id || (typeof c.before === 'string' ? c.before : null);
+          const i = targetExId ? r.ex.findIndex(e => e.id === targetExId) : -1;
+          if (i < 0) break;
+          const old = r.ex[i];
+          const a = c.after || {};
+          const newId = a.id || c.newId || (typeof c.after === 'string' ? c.after : null);
+          if (!newId) break;
+          r.ex[i] = {
+            ...old,
+            id: newId,
+            ...(a.sets != null ? { sets: a.sets } : {}),
+            ...(a.reps != null ? { reps: a.reps } : {}),
+            ...(a.sec != null ? { sec: a.sec } : {}),
+            ...(a.min != null ? { min: a.min } : {}),
+            ...(a.speed != null ? { speed: a.speed } : {}),
+            ...(a.weight != null && a.weight > 0 ? { weight: a.weight } : {}),
+            ...(a.mode ? { mode: a.mode } : {}),
+            ...(a.prog ? { prog: a.prog } : {})
+          };
+          ensureCustomRegistered(newId, a.name);
+          break;
+        }
+
+        case 'remove-exercise':
+        case 'remove': {
+          if (!r || !r.ex) break;
+          const targetExId = target.exId || c.targetExId || c.before?.id || (typeof c.before === 'string' ? c.before : null);
+          if (targetExId) {
+            r.ex = r.ex.filter(e => e.id !== targetExId);
+          }
+          break;
+        }
+
+        case 'sets': {
+          if (!r || !r.ex) break;
+          const ex = r.ex.find(e => e.id === target.exId);
+          if (ex && c.after != null) ex.sets = c.after;
+          break;
+        }
+
+        case 'reps': {
+          if (!r || !r.ex) break;
+          const ex = r.ex.find(e => e.id === target.exId);
+          if (ex && c.after != null) ex.reps = c.after;
+          break;
+        }
+
+        case 'repsMin': {
+          if (!r || !r.ex) break;
+          const ex = r.ex.find(e => e.id === target.exId);
+          if (ex && c.after != null) ex.repsMin = c.after;
+          break;
+        }
+
+        case 'sec': {
+          if (!r || !r.ex) break;
+          const ex = r.ex.find(e => e.id === target.exId);
+          if (ex && c.after != null) ex.sec = c.after;
+          break;
+        }
+
+        case 'cardio': {
+          if (!r || !r.ex) break;
+          const ex = r.ex.find(e => e.id === target.exId);
+          if (ex) {
+            if (c.after?.min != null) ex.min = c.after.min;
+            if (c.after?.speed != null) ex.speed = c.after.speed;
+          }
+          break;
+        }
+
+        case 'inc': {
+          if (!r || !r.ex) break;
+          const ex = r.ex.find(e => e.id === target.exId);
+          if (ex && c.after != null) ex.inc = c.after;
+          break;
+        }
+
+        case 'exercise-prog': {
+          if (!r || !r.ex) break;
+          const ex = r.ex.find(e => e.id === target.exId);
+          if (ex && c.after != null) ex.prog = c.after;
+          break;
+        }
+
+        case 'routine-prog': {
+          if (r && c.after != null) r.prog = c.after;
+          break;
+        }
+
+        case 'reorder': {
+          if (!r || !r.ex) break;
+          const order = Array.isArray(c.after) ? c.after : null;
+          if (order) {
+            const byId = new Map(r.ex.map(e => [e.id, e]));
+            const next = order.map(id => byId.get(id)).filter(Boolean);
+            if (next.length === r.ex.length) {
+              r.ex = next;
+            }
+          }
+          break;
+        }
+
+        case 'superset': {
+          if (!r || !r.ex) break;
+          const i = r.ex.findIndex(e => e.id === target.exId);
+          if (i < 0) break;
+          if (!c.after?.link) {
+            delete r.ex[i].sg;
+          } else {
+            const withId = c.after?.with;
+            const j = r.ex.findIndex(e => e.id === withId);
+            if (j >= 0) {
+              const [partner] = r.ex.splice(j, 1);
+              const at = r.ex.findIndex(e => e.id === target.exId);
+              r.ex.splice(at + 1, 0, partner);
+              const tag = 'sg' + String(Date.now()).slice(-4);
+              r.ex[at].sg = tag;
+              r.ex[at + 1].sg = tag;
+            }
+          }
+          break;
+        }
+
+        case 'add-routine': {
+          const a = c.after || {};
+          const exList = (Array.isArray(a.ex) ? a.ex : []).map(e => {
+            ensureCustomRegistered(e.id, e.name);
+            return {
+              id: e.id,
+              sets: e.sets ?? 3,
+              mode: e.mode ?? 'reps',
+              ...(e.mode === 'time' ? { sec: e.sec ?? 45 } : { reps: e.reps ?? 10 })
+            };
+          });
+          const newRoutine = {
+            id: a.id || ('r' + (plan.routines.length + 1)),
+            name: a.name || 'Routine',
+            emoji: a.emoji || '🏋️',
+            ...(a.prog ? { prog: a.prog } : {}),
+            ex: exList
+          };
+          plan.routines.push(newRoutine);
+          break;
+        }
+
+        case 'remove-routine': {
+          const id = target.routineId || c.targetRoutineId;
+          if (id) {
+            plan.routines = plan.routines.filter(rt => rt.id !== id);
+            for (const d of Object.keys(plan.week)) {
+              if (plan.week[d] === id) delete plan.week[d];
+            }
+          }
+          break;
+        }
+
+        case 'rename-routine': {
+          if (r && typeof c.after === 'string') {
+            r.name = c.after;
+          }
+          break;
+        }
+
+        case 'week': {
+          const d = target.weekday != null ? target.weekday : c.weekday;
+          if (d != null) {
+            if (c.after == null || c.after === 'rest') {
+              delete plan.week[d];
+            } else {
+              plan.week[d] = c.after;
+            }
+          }
+          break;
+        }
+      }
+    }
+  } else if (review?.routines) {
+    if (Array.isArray(review.customEx)) {
+      for (const c of review.customEx) {
+        const cid = typeof c === 'string' ? c : c?.id;
+        ensureCustomRegistered(cid, c?.n || c?.name);
+      }
+    }
+    for (const r of review.routines) {
+      for (const e of (r.ex || [])) {
+        ensureCustomRegistered(e.id, e.name);
+      }
+      plan.routines.push({ ...r, ex: [...(r.ex || [])] });
+    }
+    if (review.week) {
+      Object.assign(plan.week, review.week);
+    }
+  }
+
+  return plan;
+}

@@ -73,6 +73,7 @@ export function validatePlan(data, ctx = {}) {
     .slice(0, 20)
     .map(c => ({ id: clampStr(c.id, 40), n: clampStr(c.n, 60), bp: clampStr(c.bp || 'waist', 30), ...(c.desc ? { desc: clampStr(c.desc, 400) } : {}) }));
   const proposedIds = new Set(customEx.map(c => c.id));
+  const ctxCustomIds = new Set((ctx.customEx || []).map(c => (typeof c === 'string' ? c : c?.id)));
 
   const routines = [];
   (Array.isArray(data.routines) ? data.routines : []).slice(0, MAX_ROUTINES).forEach((r, ri) => {
@@ -85,7 +86,7 @@ export function validatePlan(data, ctx = {}) {
       if (!e || !isStr(e.id)) { errors.push(`${where}.id is required`); return; }
       // FR-16: an id that resolves to nothing invalidates the proposal rather than being
       // dropped into a plan that renders blank the first time it is trained.
-      if (!libraryHas(e.id) && !proposedIds.has(e.id)) {
+      if (!libraryHas(e.id) && !proposedIds.has(e.id) && !ctxCustomIds.has(e.id) && !(typeof e.id === 'string' && e.id.startsWith('cust_'))) {
         errors.push(`${where}.id "${e.id}" is not in the exercise library and is not one of your own customEx entries — use an id from the library provided in the payload`);
         return;
       }
@@ -167,7 +168,7 @@ export function validatePlan(data, ctx = {}) {
  * `plan` is the payload's cleaned plan — every target must resolve against it, so a change
  * aimed at a routine that no longer exists never reaches the review screen.
  */
-export function validateReview(data, plan) {
+export function validateReview(data, plan, options = {}) {
   if (!data || typeof data !== 'object') return fail(['the answer was not an object']);
   if (data.nochange) {
     return { ok: true, nochange: true, reading: clampStr(data.reading || data.summary || '', 1200) };
@@ -177,6 +178,63 @@ export function validateReview(data, plan) {
   const changes = [];
   const list = Array.isArray(data.changes) ? data.changes : null;
   if (!list) return fail(['changes must be an array (or set "nochange": true with a "reading")']);
+
+  const customExList = Array.isArray(options?.customEx)
+    ? options.customEx
+    : (Array.isArray(plan?.customEx) ? plan.customEx : []);
+
+  const customMap = new Map();
+  for (const c of customExList) {
+    if (typeof c === 'string') {
+      customMap.set(c, { id: c, n: c });
+    } else if (c && typeof c === 'object' && c.id) {
+      customMap.set(c.id, c);
+    }
+  }
+
+  const libOptions = options?.library;
+  const isLibraryEx = id => {
+    if (libOptions) {
+      if (Array.isArray(libOptions)) return libOptions.some(e => e && e.id === id);
+      if (typeof libOptions.has === 'function') return libOptions.has(id);
+    }
+    return libraryHas(id);
+  };
+
+  const getLibraryName = id => {
+    if (libOptions) {
+      if (Array.isArray(libOptions)) {
+        const found = libOptions.find(e => e && e.id === id);
+        if (found) return found.n || found.name || id;
+      } else if (typeof libOptions.get === 'function') {
+        const found = libOptions.get(id);
+        if (found) return found.n || found.name || id;
+      }
+    }
+    return libraryName(id);
+  };
+
+  const isValidEx = id => {
+    if (!isStr(id)) return false;
+    if (isLibraryEx(id)) return true;
+    if (customMap.has(id)) return true;
+    if (id.startsWith('cust_')) return true;
+    return false;
+  };
+
+  const getExName = (id, fallback) => {
+    if (customMap.has(id)) {
+      const c = customMap.get(id);
+      return c.n || c.name || fallback || id;
+    }
+    if (isLibraryEx(id)) {
+      return getLibraryName(id) || fallback || id;
+    }
+    if (id.startsWith('cust_')) {
+      return fallback || id;
+    }
+    return fallback || id;
+  };
 
   list.slice(0, MAX_CHANGES).forEach((c, i) => {
     const where = `changes[${i}]`;
@@ -220,9 +278,9 @@ export function validateReview(data, plan) {
     switch (c.type) {
       case 'add-exercise': {
         const a = c.after || {};
-        if (!isStr(a.id) || !libraryHas(a.id)) { errors.push(`${where}.after.id must be an exercise id from the library`); return; }
+        if (!isStr(a.id) || !isValidEx(a.id)) { errors.push(`${where}.after.id must be an exercise id from the library`); return; }
         out.after = {
-          id: a.id, name: libraryName(a.id),
+          id: a.id, name: getExName(a.id, a.name),
           sets: isInt(a.sets, 1, 10) ? a.sets : 3,
           ...(MODES.includes(a.mode) ? { mode: a.mode } : { mode: 'reps' }),
           ...(isInt(a.reps, 1, 100) ? { reps: a.reps } : {}),
@@ -235,10 +293,10 @@ export function validateReview(data, plan) {
       }
       case 'swap-exercise': {
         const a = c.after || {};
-        if (!isStr(a.id) || !libraryHas(a.id)) { errors.push(`${where}.after.id must be an exercise id from the library`); return; }
+        if (!isStr(a.id) || !isValidEx(a.id)) { errors.push(`${where}.after.id must be an exercise id from the library`); return; }
         if (a.id === target.exId) { errors.push(`${where} swaps an exercise for itself`); return; }
         out.after = {
-          id: a.id, name: libraryName(a.id),
+          id: a.id, name: getExName(a.id, a.name),
           ...(isInt(a.sets, 1, 10) ? { sets: a.sets } : {}),
           ...(isInt(a.reps, 1, 100) ? { reps: a.reps } : {}),
           ...(isNum(a.weight) && a.weight > 0 ? { weight: a.weight } : {})
@@ -284,13 +342,13 @@ export function validateReview(data, plan) {
       case 'add-routine': {
         const a = c.after || {};
         if (!isStr(a.name)) { errors.push(`${where}.after.name is required`); return; }
-        const ex = (Array.isArray(a.ex) ? a.ex : []).filter(e => e && isStr(e.id) && libraryHas(e.id)).slice(0, MAX_EX_PER_ROUTINE);
+        const ex = (Array.isArray(a.ex) ? a.ex : []).filter(e => e && isStr(e.id) && isValidEx(e.id)).slice(0, MAX_EX_PER_ROUTINE);
         if (!ex.length) { errors.push(`${where}.after.ex must list at least one exercise from the library`); return; }
         out.after = {
           name: clampStr(a.name, 40), emoji: clampStr(a.emoji || '🏋️', 8),
           ...(POLICIES.includes(a.prog) ? { prog: a.prog } : {}),
           ex: ex.map(e => ({
-            id: e.id, name: libraryName(e.id),
+            id: e.id, name: getExName(e.id, e.name),
             sets: isInt(e.sets, 1, 10) ? e.sets : 3,
             mode: MODES.includes(e.mode) ? e.mode : 'reps',
             ...(isInt(e.reps, 1, 100) ? { reps: e.reps } : {}),

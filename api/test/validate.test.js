@@ -171,3 +171,95 @@ test('every allowed change type has a validator that accepts a well-formed insta
     assert.equal(r.ok, true, `${type} should validate: ${JSON.stringify(r.errors)}`);
   }
 });
+
+test('shared coach exports validation interfaces matching server validate', async () => {
+  const shared = await import('shared/coach');
+  assert.deepEqual(CHANGE_TYPES, shared.CHANGE_TYPES);
+  assert.equal(validatePlan, shared.validatePlan);
+  assert.equal(validateReview, shared.validateReview);
+  assert.equal(extractJSON, shared.extractJSON);
+});
+
+test('review validation allows custom exercises matching cust_ prefix or customEx option (Issue #50)', async () => {
+  const withCustPrefix = review([
+    change({
+      type: 'add-exercise',
+      target: { routineId: 'r1' },
+      after: { id: 'cust_hex_press', name: 'Hex Press', sets: 3, reps: 10 }
+    })
+  ]);
+  assert.equal(withCustPrefix.ok, true, `cust_ prefix should validate: ${JSON.stringify(withCustPrefix.errors)}`);
+  assert.equal(withCustPrefix.proposal.changes[0].after.name, 'Hex Press');
+
+  const withSwapCust = review([
+    change({
+      type: 'swap-exercise',
+      target: { routineId: 'r1', exId: '0001' },
+      after: { id: 'cust_incline_fly', name: 'Incline Fly', sets: 3, reps: 12 }
+    })
+  ]);
+  assert.equal(withSwapCust.ok, true, `cust_ swap should validate: ${JSON.stringify(withSwapCust.errors)}`);
+
+  const customExOption = [{ id: 'cx_custom1', n: 'Custom Sandbag Carry', bp: 'back' }];
+  const withCustomEx = validateReview(
+    {
+      coach_contract: 1,
+      summary: 'Add custom carry',
+      changes: [
+        change({
+          type: 'add-exercise',
+          target: { routineId: 'r1' },
+          after: { id: 'cx_custom1', sets: 3, reps: 10 }
+        })
+      ]
+    },
+    PLAN,
+    { customEx: customExOption }
+  );
+  assert.equal(withCustomEx.ok, true, `customEx option should validate: ${JSON.stringify(withCustomEx.errors)}`);
+  assert.equal(withCustomEx.proposal.changes[0].after.name, 'Custom Sandbag Carry');
+
+  const invalidEx = review([
+    change({
+      type: 'add-exercise',
+      target: { routineId: 'r1' },
+      after: { id: 'invalid_non_custom_id' }
+    })
+  ]);
+  assert.equal(invalidEx.ok, false, 'Invalid non-custom ID must be rejected');
+});
+
+test('mergePlan treats customEx as first-class exercises across review change operations (Issue #50)', async () => {
+  const { mergePlan, canonicalPlan, planHash } = await import('shared/coach');
+
+  const plan = JSON.parse(JSON.stringify(PLAN));
+  const reviewChanges = [
+    change({
+      type: 'add-exercise',
+      target: { routineId: 'r1' },
+      after: { id: 'cust_band_pull', name: 'Band Pull-Apart', sets: 3, reps: 15 }
+    }),
+    change({
+      type: 'swap-exercise',
+      target: { routineId: 'r1', exId: '0007' },
+      after: { id: 'cust_safety_squat', name: 'Safety Bar Squat', sets: 4, reps: 6 }
+    })
+  ];
+
+  const merged = mergePlan(plan, { changes: reviewChanges }, {
+    customEx: [{ id: 'cust_safety_squat', n: 'Safety Bar Squat', bp: 'legs' }]
+  });
+
+  const r1 = merged.routines.find(r => r.id === 'r1');
+  assert.ok(r1.ex.some(e => e.id === 'cust_band_pull'), 'Added custom exercise must be present');
+  assert.ok(r1.ex.some(e => e.id === 'cust_safety_squat'), 'Swapped custom exercise must be present');
+  assert.equal(r1.ex.some(e => e.id === '0007'), false, 'Replaced exercise must be absent');
+
+  assert.ok(merged.customEx.some(c => c.id === 'cust_band_pull'), 'cust_band_pull registered in plan.customEx');
+  assert.ok(merged.customEx.some(c => c.id === 'cust_safety_squat'), 'cust_safety_squat registered in plan.customEx');
+
+  const canon = canonicalPlan(merged);
+  assert.ok(canon);
+  const hash = planHash(merged);
+  assert.equal(typeof hash, 'string');
+});
