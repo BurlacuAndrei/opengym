@@ -23,6 +23,15 @@ import {
   getRoutineRestSec,
   normalizeRoutine
 } from '../lib/routine-kind.js'
+import { getCardioAdapter } from '../lib/cardio-adapter.js'
+import {
+  reconcileTracksAndRoutes,
+  lazyFetchTrack,
+  lazyFetchRoute,
+  deleteRemoteTrack,
+  deleteRemoteRoute,
+  cleanupCachedServerTracks
+} from '../lib/track-sync.js'
 import { App as CapApp } from '@capacitor/app'
 
 const KEY = 'gym_state_v1'
@@ -420,7 +429,52 @@ export const useStore = create((set, get) => {
           s.cardioActivities.splice(idx, 1)
         }
       })
+      if (removed) {
+        const trackPath = removed.trackPath || (removed.id ? `${removed.id}.json` : '')
+        if (trackPath) {
+          getCardioAdapter().deleteTrack(trackPath).catch(() => {})
+        }
+        if (get().isServerMode?.() || get().user) {
+          deleteRemoteTrack(id).catch(() => {})
+        }
+      }
       return removed
+    },
+    deleteRoute(id) {
+      let removed = null
+      get().update(s => {
+        if (Array.isArray(s.routes)) {
+          const idx = s.routes.findIndex(r => r.id === id)
+          if (idx !== -1) {
+            removed = s.routes[idx]
+            s.routes.splice(idx, 1)
+          }
+        }
+        if (Array.isArray(s.savedRoutes)) {
+          const idx = s.savedRoutes.findIndex(r => r.id === id)
+          if (idx !== -1) {
+            if (!removed) removed = s.savedRoutes[idx]
+            s.savedRoutes.splice(idx, 1)
+          }
+        }
+      })
+      if (removed || id) {
+        const trackPath = removed?.trackPath || `routes/${id}.json`
+        getCardioAdapter().deleteTrack(trackPath).catch(() => {})
+        if (get().isServerMode?.() || get().user) {
+          deleteRemoteRoute(id).catch(() => {})
+        }
+      }
+      return removed
+    },
+    reconcileTracks(options) {
+      return reconcileTracksAndRoutes({ store: useStore, ...options })
+    },
+    lazyFetchTrack(id, options) {
+      return lazyFetchTrack(id, { store: useStore, ...options })
+    },
+    lazyFetchRoute(id, options) {
+      return lazyFetchRoute(id, { store: useStore, ...options })
     },
 
     isServerMode: () => Boolean(get().user && (!MOBILE || getServerUrl())),
@@ -552,8 +606,14 @@ export const useStore = create((set, get) => {
         openConflictDialog({ serverState })
       } else if (!phoneHasData && serverHasData) {
         await get().pullState(serverState)
+        if ((get().S.cardioActivities?.length || get().S.routes?.length)) {
+          reconcileTracksAndRoutes({ store: useStore }).catch(() => {})
+        }
       } else if (phoneHasData && !serverHasData) {
         await get().pushState()
+        if ((get().S.cardioActivities?.length || get().S.routes?.length)) {
+          reconcileTracksAndRoutes({ store: useStore }).catch(() => {})
+        }
       }
     },
 
@@ -577,7 +637,7 @@ export const useStore = create((set, get) => {
     },
 
     async disconnectServer(opts = {}) {
-      const removeData = typeof opts === 'boolean' ? opts : Boolean(opts?.removeData)
+      const removeData = typeof opts === 'boolean' ? opts : Boolean(opts?.removeData || opts?.removeServerData)
       clearTimeout(pushTm)
       await clearToken().catch(() => {})
       clearServerConfig()
@@ -587,6 +647,7 @@ export const useStore = create((set, get) => {
       localStorage.removeItem('gym_last_synced_ts')
       if (removeData) {
         persist(clone(DEF), false)
+        await cleanupCachedServerTracks({ adapter: getCardioAdapter(), all: true }).catch(() => {})
       } else {
         if (MOBILE) {
           nativeSave(get().S)
@@ -702,6 +763,10 @@ export const handleReauth = (newUser, serverData) => useStore.getState().handleR
 export const logCardioActivity = (act) => useStore.getState().logCardioActivity(act)
 export const updateCardioActivity = (id, patch) => useStore.getState().updateCardioActivity(id, patch)
 export const deleteCardioActivity = (id) => useStore.getState().deleteCardioActivity(id)
+export const deleteRoute = (id) => useStore.getState().deleteRoute(id)
+export const reconcileTracks = (options) => useStore.getState().reconcileTracks(options)
+export const lazyFetchTrackStore = (id, options) => useStore.getState().lazyFetchTrack(id, options)
+export const lazyFetchRouteStore = (id, options) => useStore.getState().lazyFetchRoute(id, options)
 setGearStore(useStore)
 export const addGear = (gear) => useStore.getState().addGear(gear)
 export const updateGear = (id, patch) => useStore.getState().updateGear(id, patch)
