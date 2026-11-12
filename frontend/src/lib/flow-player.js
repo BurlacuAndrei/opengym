@@ -1,6 +1,6 @@
 import { getRoutineKind } from './routine-kind.js'
 import { exOr } from './exercises.js'
-import { speak as defaultSpeak, stopSpeaking as defaultStopSpeaking } from './cardio-adapter.js'
+import { speak as defaultSpeak, stopSpeaking as defaultStopSpeaking } from './speech.js'
 import { t } from './i18n.js'
 
 /**

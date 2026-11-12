@@ -8,6 +8,15 @@
 //   4. In-memory test fake (`createMemoryCardioAdapter`) for unit/integration testing.
 
 import { Capacitor } from '@capacitor/core'
+import {
+  createMemorySpeechAdapter,
+  createNativeSpeechAdapter,
+  setSpeechAdapter,
+  getSpeechAdapter,
+  speak as speechSpeak,
+  stopSpeaking as speechStopSpeaking,
+  duckAudio as speechDuckAudio
+} from './speech.js'
 
 export const RECOVERY_LOG_PATH = 'opengym-cardio-recovery.log'
 export const DEFAULT_TRACKS_DIR = 'tracks'
@@ -111,11 +120,9 @@ export class RecoveryLog extends Array {
 export function createMemoryCardioAdapter(initial = {}) {
   const tracks = new Map(Object.entries(initial.tracks || {}))
   const recoveryLog = [...(initial.recoveryLog || [])]
-  const spokenCues = [...(initial.spokenCues || [])]
+  const speechAdapter = initial.speechAdapter || createMemorySpeechAdapter(initial)
   const watchers = new Map()
   let nextWatchId = 1
-  let duckingState = Boolean(initial.isDucking)
-  let speakingState = Boolean(initial.isSpeaking)
 
   function resolveTrackKey(path) {
     const norm = normalizeTrackPath(path)
@@ -131,15 +138,15 @@ export function createMemoryCardioAdapter(initial = {}) {
     isMemory: true,
 
     get isDucking() {
-      return duckingState
+      return speechAdapter.isDucking
     },
 
     get isSpeaking() {
-      return speakingState
+      return speechAdapter.isSpeaking
     },
 
     get spokenCues() {
-      return spokenCues
+      return speechAdapter.spokenCues
     },
 
     // --- GPS Watcher Subsystem ---
@@ -312,42 +319,25 @@ export function createMemoryCardioAdapter(initial = {}) {
       return true
     },
 
-    // --- Text-to-Speech Subsystem ---
+    // --- Text-to-Speech Subsystem (delegated to Speech module) ---
     async speak(text, opts = {}) {
-      const cue = {
-        text: String(text),
-        ducking: opts.ducking !== false,
-        ...opts,
-        timestamp: Date.now()
-      }
-      Object.defineProperty(cue, 'toString', { value: () => cue.text })
-      Object.defineProperty(cue, 'valueOf', { value: () => cue.text })
-
-      spokenCues.push(cue)
-      speakingState = true
-      if (cue.ducking) {
-        duckingState = true
-      }
-      return cue
+      return speechAdapter.speak(text, opts)
     },
 
     stopSpeaking() {
-      speakingState = false
-      duckingState = false
-      return true
+      return speechAdapter.stopSpeaking()
     },
 
     duckAudio(enabled = true) {
-      duckingState = Boolean(enabled)
-      return duckingState
+      return speechAdapter.duckAudio(enabled)
     },
 
     getSpokenCues() {
-      return [...spokenCues]
+      return speechAdapter.getSpokenCues()
     },
 
     clearSpokenCues() {
-      spokenCues.length = 0
+      return speechAdapter.clearSpokenCues()
     }
   }
 
@@ -360,8 +350,7 @@ export function createMemoryCardioAdapter(initial = {}) {
 export function createNativeCardioAdapter(deps = {}) {
   let watchers = new Map()
   let nextWatchId = 1
-  let duckingState = false
-  let speakingState = false
+  const speechAdapter = deps.speechAdapter || createNativeSpeechAdapter()
 
   const isNative = deps.isNative ?? (function() {
     try {
@@ -379,11 +368,11 @@ export function createNativeCardioAdapter(deps = {}) {
     isMemory: false,
 
     get isDucking() {
-      return duckingState
+      return speechAdapter.isDucking
     },
 
     get isSpeaking() {
-      return speakingState
+      return speechAdapter.isSpeaking
     },
 
     startWatcher(opts, onFix, onError) {
@@ -639,62 +628,15 @@ export function createNativeCardioAdapter(deps = {}) {
     },
 
     async speak(text, opts = {}) {
-      const cue = {
-        text: String(text),
-        ducking: opts.ducking !== false,
-        ...opts,
-        timestamp: Date.now()
-      }
-      speakingState = true
-      if (cue.ducking) {
-        duckingState = true
-      }
-
-      if (typeof window !== 'undefined' && window.speechSynthesis) {
-        try {
-          if (opts.interrupt !== false) {
-            window.speechSynthesis.cancel()
-          }
-          const utterance = new SpeechSynthesisUtterance(cue.text)
-          if (opts.rate) utterance.rate = opts.rate
-          if (opts.pitch) utterance.pitch = opts.pitch
-          if (opts.volume !== undefined) utterance.volume = opts.volume
-          if (opts.lang) utterance.lang = opts.lang
-
-          utterance.onend = () => {
-            speakingState = false
-            duckingState = false
-            if (opts.onEnd) opts.onEnd()
-          }
-          utterance.onerror = (e) => {
-            speakingState = false
-            duckingState = false
-            if (opts.onError) opts.onError(e)
-          }
-
-          window.speechSynthesis.speak(utterance)
-        } catch {
-          speakingState = false
-          duckingState = false
-        }
-      }
-      return cue
+      return speechAdapter.speak(text, opts)
     },
 
     stopSpeaking() {
-      speakingState = false
-      duckingState = false
-      if (typeof window !== 'undefined' && window.speechSynthesis) {
-        try {
-          window.speechSynthesis.cancel()
-        } catch {}
-      }
-      return true
+      return speechAdapter.stopSpeaking()
     },
 
     duckAudio(enabled = true) {
-      duckingState = Boolean(enabled)
-      return duckingState
+      return speechAdapter.duckAudio(enabled)
     }
   }
 
@@ -706,6 +648,11 @@ const defaultMemoryAdapter = createMemoryCardioAdapter()
 
 export function setCardioAdapter(adapter) {
   activeAdapter = adapter
+  if (adapter && typeof adapter.speak === 'function') {
+    setSpeechAdapter(adapter)
+  } else if (!adapter) {
+    setSpeechAdapter(null)
+  }
 }
 
 export function getCardioAdapter() {
@@ -752,9 +699,13 @@ export function clearRecoveryLog() {
 }
 
 export function speak(text, opts) {
-  return getCardioAdapter().speak(text, opts)
+  return speechSpeak(text, opts)
 }
 
 export function stopSpeaking() {
-  return getCardioAdapter().stopSpeaking()
+  return speechStopSpeaking()
+}
+
+export function duckAudio(enabled = true) {
+  return speechDuckAudio(enabled)
 }

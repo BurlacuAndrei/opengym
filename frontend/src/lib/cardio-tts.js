@@ -1,4 +1,4 @@
-import { speak as defaultSpeak } from './cardio-adapter.js'
+import { speak as defaultSpeak } from './speech.js'
 import { METERS_PER_KM, METERS_PER_MILE, isImperial as isFormatImperial } from './cardio-format.js'
 import { useStore } from '../store/useStore.js'
 
