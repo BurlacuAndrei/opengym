@@ -578,7 +578,7 @@ export function computeElevationGain(points, options = {}) {
 
   if (!Array.isArray(points) || points.length === 0) return stats
 
-  const pts = smooth ? smoothElevation(points, { windowSize }) : points
+  const pts = (smooth && points.length >= windowSize) ? smoothElevation(points, { windowSize }) : points
 
   let prevEle = null
 

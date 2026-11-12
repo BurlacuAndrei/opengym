@@ -16,6 +16,13 @@ import {
   accumulateGearDistance as libAccumulateGearDistance,
   setGearStore
 } from '../lib/gear.js'
+import {
+  ROUTINE_KINDS,
+  DEFAULT_ROUTINE_KIND,
+  getRoutineKind,
+  getRoutineRestSec,
+  normalizeRoutine
+} from '../lib/routine-kind.js'
 import { App as CapApp } from '@capacitor/app'
 
 const KEY = 'gym_state_v1'
@@ -299,6 +306,35 @@ export const useStore = create((set, get) => {
           delete s.week[day]
         } else {
           s.week[day] = sessions
+        }
+      })
+    },
+
+    // Routine kind and rest timer management (Issue #59)
+    getRoutineKind(id) {
+      const r = get().S?.routines?.find(x => x.id === id)
+      return getRoutineKind(r)
+    },
+    getRoutineRestSec(id) {
+      const r = get().S?.routines?.find(x => x.id === id)
+      return getRoutineRestSec(r, get().S?.restSec)
+    },
+    setRoutineKind(id, kind) {
+      get().update(s => {
+        const r = s.routines?.find(x => x.id === id)
+        if (r) r.kind = ROUTINE_KINDS.includes(kind) ? kind : DEFAULT_ROUTINE_KIND
+      })
+    },
+    setRoutineRestSec(id, restSec) {
+      get().update(s => {
+        const r = s.routines?.find(x => x.id === id)
+        if (r) {
+          if (restSec == null || restSec === 0 || restSec === '') delete r.restSec
+          else {
+            const val = Number(restSec)
+            if (Number.isFinite(val) && val >= 0) r.restSec = val
+            else delete r.restSec
+          }
         }
       })
     },
@@ -671,3 +707,9 @@ export const addGear = (gear) => useStore.getState().addGear(gear)
 export const updateGear = (id, patch) => useStore.getState().updateGear(id, patch)
 export const retireGear = (id) => useStore.getState().retireGear(id)
 export const accumulateGearDistance = (gearId, distanceM) => useStore.getState().accumulateGearDistance(gearId, distanceM)
+export { ROUTINE_KINDS, DEFAULT_ROUTINE_KIND, getRoutineKind, getRoutineRestSec, normalizeRoutine } from '../lib/routine-kind.js'
+export const getRoutineKindById = (id) => useStore.getState().getRoutineKind(id)
+export const getRoutineRestSecById = (id) => useStore.getState().getRoutineRestSec(id)
+export const setRoutineKind = (id, kind) => useStore.getState().setRoutineKind(id, kind)
+export const setRoutineRestSec = (id, restSec) => useStore.getState().setRoutineRestSec(id, restSec)
+

@@ -1740,4 +1740,73 @@ describe('useStore', () => {
       expect(migrated.dayPlan['2026-11-10']).toEqual(['rd'])
     })
   })
+
+  describe('routine kinds and restSec override (Issue #59)', () => {
+    it('manages routine kind and defaults legacy routines to gym', () => {
+      const store = useStore.getState()
+      store.update(s => {
+        s.routines = [
+          { id: 'r-legacy', name: 'Legacy Routine' },
+          { id: 'r-yoga', name: 'Morning Flow', kind: 'yoga' },
+          { id: 'r-hiit', name: 'Sprint Circuit', kind: 'hiit' }
+        ]
+      }, false)
+
+      // Legacy routine has no kind -> defaults to gym
+      expect(store.getRoutineKind('r-legacy')).toBe('gym')
+      expect(store.getRoutineKind('r-yoga')).toBe('yoga')
+      expect(store.getRoutineKind('r-hiit')).toBe('hiit')
+      expect(store.getRoutineKind('non-existent')).toBe('gym')
+
+      // Set kind to mobility
+      store.setRoutineKind('r-legacy', 'mobility')
+      expect(store.getRoutineKind('r-legacy')).toBe('mobility')
+      expect(useStore.getState().S.routines.find(r => r.id === 'r-legacy').kind).toBe('mobility')
+
+      // Invalid kind falls back to gym
+      store.setRoutineKind('r-legacy', 'invalid-kind')
+      expect(store.getRoutineKind('r-legacy')).toBe('gym')
+    })
+
+    it('handles per-routine restSec override with global fallback', () => {
+      const store = useStore.getState()
+      store.update(s => {
+        s.restSec = 90
+        s.routines = [
+          { id: 'r-default', name: 'Default Rest' },
+          { id: 'r-custom', name: 'Custom Rest', restSec: 45 }
+        ]
+      }, false)
+
+      // Custom override takes precedence
+      expect(store.getRoutineRestSec('r-custom')).toBe(45)
+
+      // Missing override falls back to global S.restSec
+      expect(store.getRoutineRestSec('r-default')).toBe(90)
+      expect(store.getRoutineRestSec('unknown-routine')).toBe(90)
+
+      // If global changes, default routine reflects new global
+      store.update(s => { s.restSec = 120 }, false)
+      expect(store.getRoutineRestSec('r-default')).toBe(120)
+      expect(store.getRoutineRestSec('r-custom')).toBe(45)
+
+      // Update override via store method
+      store.setRoutineRestSec('r-default', 60)
+      expect(store.getRoutineRestSec('r-default')).toBe(60)
+
+      // Clear override by setting null or 0
+      store.setRoutineRestSec('r-default', 0)
+      expect(store.getRoutineRestSec('r-default')).toBe(120)
+      expect(useStore.getState().S.routines.find(r => r.id === 'r-default').restSec).toBeUndefined()
+    })
+
+    it('exports routine kind helpers from useStore.js', async () => {
+      const mod = await import('./useStore.js')
+      expect(mod.ROUTINE_KINDS).toEqual(['gym', 'hiit', 'yoga', 'mobility'])
+      expect(mod.DEFAULT_ROUTINE_KIND).toBe('gym')
+      expect(typeof mod.getRoutineKind).toBe('function')
+      expect(typeof mod.getRoutineRestSec).toBe('function')
+      expect(typeof mod.normalizeRoutine).toBe('function')
+    })
+  })
 })
