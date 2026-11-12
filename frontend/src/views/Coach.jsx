@@ -11,6 +11,9 @@ import {
   canRevert, revertLast, changeTitle, recordDismissal
 } from '../lib/coach.js'
 import {
+  isByokActive, getByokKey, getByokStatus, runByokReview, clearByokPending
+} from '../lib/coach-byok.js'
+import {
   useCoachStatus, requestReview, resolvePending, forgetCoach, disclosure, JOB_ERRORS
 } from '../lib/coach-api.js'
 import { confirmSheet } from '../sheets.jsx'
@@ -42,23 +45,54 @@ export default function Coach() {
   const toast = useUI(s => s.toast)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
-  const { job, pending, cap, refresh } = useCoachStatus(true)
+  const [byokKey, setByokKey] = useState(null)
+  const [byokLoaded, setByokLoaded] = useState(!MOBILE)
+
+  useEffect(() => {
+    if (MOBILE) {
+      getByokKey().then(k => {
+        setByokKey(k)
+        setByokLoaded(true)
+      }).catch(() => setByokLoaded(true))
+    }
+  }, [])
+
+  const byok = isByokActive({ config, user, mobile: MOBILE, byokKey })
+  const available = coachAvailable(config, user, { demo: DEMO, mobile: MOBILE, byok: byokKey })
 
   // Gating lives in one predicate; if the instance isn't offering the Coach this route simply
   // isn't a place you can be.
-  useEffect(() => { if (!coachAvailable(config, user, { demo: DEMO, mobile: MOBILE })) nav('/home', { replace: true }) }, [config, user])
-  if (!coachAvailable(config, user, { demo: DEMO, mobile: MOBILE })) return null
+  useEffect(() => {
+    if (byokLoaded && !available) nav('/home', { replace: true })
+  }, [config, user, byokLoaded, available])
+  if (!byokLoaded || !available) return null
 
   const consented = hasConsent(S)
   const coach = S.coach || emptyCoach()
 
+  const serverStatus = useCoachStatus(!byok)
+  const [localStatus, setLocalStatus] = useState(getByokStatus())
+
+  const job = byok ? localStatus?.job : serverStatus.job
+  const pending = byok ? localStatus?.pending : serverStatus.pending
+  const cap = byok ? localStatus?.cap : serverStatus.cap
+  const refresh = byok ? () => setLocalStatus(getByokStatus()) : serverStatus.refresh
+
   const askReview = async () => {
     setBusy(true)
     try {
-      await requestReview(note)
-      setNote('')
-      toast(t('The Coach is reading your training…'))
-      refresh()
+      if (byok) {
+        toast(t('The Coach is reading your training…'))
+        await runByokReview({ S, note })
+        setNote('')
+        setLocalStatus(getByokStatus())
+        toast(t('Suggestions ready'))
+      } else {
+        await requestReview(note)
+        setNote('')
+        toast(t('The Coach is reading your training…'))
+        refresh()
+      }
     } catch (e) { toast(e.message || t('Could not ask the Coach')) }
     setBusy(false)
   }
@@ -68,7 +102,12 @@ export default function Coach() {
     message: t('Any pending suggestion is discarded and scheduled reviews stop. Your Coach history stays, and you can turn it back on anytime.'),
     confirmText: t('Turn off'), danger: true,
     onConfirm: async () => {
-      try { await forgetCoach() } catch (e) { /* server-side copy goes on the next call */ }
+      if (byok) {
+        clearByokPending()
+        setLocalStatus(getByokStatus())
+      } else {
+        try { await forgetCoach() } catch (e) { /* server-side copy goes on the next call */ }
+      }
       update(s => { s.coach = { ...(s.coach || emptyCoach()), consent: null, cadence: 'off' } })
       toast(t('The Coach is off'))
       nav('/home')
