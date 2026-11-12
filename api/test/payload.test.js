@@ -116,3 +116,12 @@ test('declined changes are carried forward so the Coach does not nag', () => {
   assert.equal(p.previouslyDeclined.length, 1);
   assert.equal(p.previouslyDeclined[0].type, 'sets');
 });
+
+test('shared coach exports match server payload interfaces', async () => {
+  const shared = await import('shared/coach');
+  assert.equal(payload.CONTRACT, shared.CONTRACT);
+  assert.equal(payload.MAX_WEEKS, shared.MAX_WEEKS);
+  assert.equal(payload.MAX_SESSIONS, shared.MAX_SESSIONS);
+  assert.deepEqual(payload.DATA_CATEGORIES, shared.DATA_CATEGORIES);
+  assert.equal(payload.LIBRARY, shared.LIBRARY);
+});

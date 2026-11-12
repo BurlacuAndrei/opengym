@@ -6,8 +6,11 @@ import {
   extractModalities,
   VALID_MODALITIES,
   LIBRARY,
-  build
+  build,
+  computeCardioSummaryAndLoad,
+  acwrRiskCategory
 } from './payload.js';
+import { buildPrompt } from './prompts.js';
 
 test('exerciseCategory determines correct category tag with strength default', () => {
   // Explicit cat property
@@ -196,4 +199,103 @@ test('build integrates modality filtering and coachProfile modalities', () => {
   for (const ex of cardioPayload.library) {
     assert.equal(exerciseCategory(ex), 'cardio');
   }
+});
+
+test('build handles empty cardio history gracefully without NaN (Issue #69)', () => {
+  const S = { cardioActivities: [] };
+  const p = build(S, 'user1', { kind: 'review' });
+
+  assert.ok(p.cardio, 'cardio object is present');
+  assert.equal(p.cardio.summary7d.distanceKm, 0);
+  assert.equal(p.cardio.summary7d.distanceMiles, 0);
+  assert.equal(p.cardio.summary7d.mileage, 0);
+  assert.equal(p.cardio.summary7d.durationMin, 0);
+  assert.equal(p.cardio.summary7d.count, 0);
+
+  assert.equal(p.cardio.summary28d.distanceKm, 0);
+  assert.equal(p.cardio.summary28d.distanceMiles, 0);
+  assert.equal(p.cardio.summary28d.mileage, 0);
+  assert.equal(p.cardio.summary28d.durationMin, 0);
+  assert.equal(p.cardio.summary28d.count, 0);
+
+  assert.equal(p.cardio.acuteLoad, 0);
+  assert.equal(p.cardio.chronicLoad, 0);
+  assert.equal(p.cardio.acwr, 0);
+  assert.equal(Number.isNaN(p.cardio.acwr), false);
+  assert.equal(Number.isFinite(p.cardio.acwr), true);
+  assert.equal(p.cardio.riskCategory, 'undertraining');
+
+  assert.deepEqual(p.trainingLoad, {
+    acuteLoad: 0,
+    chronicLoad: 0,
+    acwr: 0,
+    riskCategory: 'undertraining',
+    riskZone: 'undertraining'
+  });
+
+  // Verify review aggregates linkage
+  assert.equal(p.aggregates.cardio, p.cardio);
+
+  // Verify prompt serialization works without NaN or error
+  const prompt = buildPrompt('review', p);
+  assert.ok(prompt.includes('"acwr": 0'));
+  assert.ok(prompt.includes('"riskCategory": "undertraining"'));
+  assert.ok(!prompt.includes('NaN'));
+});
+
+test('build computes cardio volume summaries and ACWR training load from cardioActivities (Issue #69)', () => {
+  const S = {
+    cardioActivities: [
+      // Within 7 days: 5000m = 5km, 30 min, RPE 7 -> load = 210
+      { id: 'c1', d: '2026-11-10', startTime: '2026-11-10T08:00:00Z', durationMs: 1800000, distanceM: 5000, rpe: 7 },
+      // Within 28 days (not 7d): 10000m = 10km, 60 min, RPE 8 -> load = 480
+      { id: 'c2', d: '2026-11-03', startTime: '2026-11-03T10:00:00Z', durationMs: 3600000, distanceM: 10000, rpe: 8 }
+    ]
+  };
+
+  const p = build(S, 'user1', { kind: 'review', today: '2026-11-12' });
+
+  // 7-day summary: 5 km (3.11 mi), 30 min, 1 session
+  assert.equal(p.cardio.summary7d.distanceKm, 5);
+  assert.equal(p.cardio.summary7d.distanceMiles, 3.11);
+  assert.equal(p.cardio.summary7d.durationMin, 30);
+  assert.equal(p.cardio.summary7d.count, 1);
+
+  // 28-day summary: 15 km (9.32 mi), 90 min, 2 sessions
+  assert.equal(p.cardio.summary28d.distanceKm, 15);
+  assert.equal(p.cardio.summary28d.distanceMiles, 9.32);
+  assert.equal(p.cardio.summary28d.durationMin, 90);
+  assert.equal(p.cardio.summary28d.count, 2);
+
+  // Training load:
+  // Acute total = 210 -> acuteDaily = 210 / 7 = 30
+  // Chronic total = 690 -> chronicDaily = 690 / 28 = 24.64
+  // ACWR = 30 / 24.64 = 1.22 (optimal: 0.8 - 1.3)
+  assert.equal(p.cardio.acuteLoad, 30);
+  assert.equal(p.cardio.chronicLoad, 24.6);
+  assert.equal(p.cardio.acwr, 1.22);
+  assert.equal(p.cardio.riskCategory, 'optimal');
+
+  // Context in prompt
+  const prompt = buildPrompt('review', p);
+  assert.ok(prompt.includes('"acwr": 1.22'));
+  assert.ok(prompt.includes('"riskCategory": "optimal"'));
+  assert.ok(prompt.includes('"distanceKm": 5'));
+  assert.ok(prompt.includes('"distanceKm": 15'));
+});
+
+test('acwrRiskCategory classifies risk zones and handles boundary conditions (Issue #69)', () => {
+  assert.equal(acwrRiskCategory(0), 'undertraining');
+  assert.equal(acwrRiskCategory(0.79), 'undertraining');
+  assert.equal(acwrRiskCategory(0.8), 'optimal');
+  assert.equal(acwrRiskCategory(1.0), 'optimal');
+  assert.equal(acwrRiskCategory(1.3), 'optimal');
+  assert.equal(acwrRiskCategory(1.31), 'caution');
+  assert.equal(acwrRiskCategory(1.5), 'caution');
+  assert.equal(acwrRiskCategory(1.51), 'danger');
+  assert.equal(acwrRiskCategory(2.0), 'danger');
+  assert.equal(acwrRiskCategory(NaN), 'undertraining');
+  assert.equal(acwrRiskCategory(null), 'undertraining');
+  assert.equal(acwrRiskCategory(undefined), 'undertraining');
+  assert.equal(acwrRiskCategory(Infinity), 'undertraining');
 });

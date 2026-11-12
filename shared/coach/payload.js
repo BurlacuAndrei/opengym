@@ -306,6 +306,208 @@ function cleanWorkout(w) {
   };
 }
 
+/* ---------- cardio volume summary & training load (ACWR) (Issue #69) ---------- */
+
+function cardioDate(c) {
+  if (!c || typeof c !== 'object') return null;
+  if (typeof c.d === 'string' && c.d.length >= 10) return c.d.slice(0, 10);
+  if (typeof c.date === 'string' && c.date.length >= 10) return c.date.slice(0, 10);
+  if (c.startTime) {
+    if (typeof c.startTime === 'string' && c.startTime.length >= 10) {
+      const s = c.startTime.slice(0, 10);
+      if (!isNaN(new Date(s).getTime())) return s;
+    }
+    const dt = new Date(c.startTime);
+    if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
+  }
+  if (c.start) {
+    const dt = new Date(c.start);
+    if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
+function getDistanceM(c) {
+  if (!c || typeof c !== 'object') return 0;
+  let val = 0;
+  if (typeof c.distanceM === 'number') val = c.distanceM;
+  else if (typeof c.distance === 'number') val = c.distance;
+  else if (typeof c.dist === 'number') val = c.dist;
+  else if (typeof c.distanceKm === 'number') val = c.distanceKm * 1000;
+  else if (typeof c.miles === 'number') val = c.miles * 1609.344;
+  else if (typeof c.distanceM === 'string' && !isNaN(Number(c.distanceM))) val = Number(c.distanceM);
+  else if (typeof c.distance === 'string' && !isNaN(Number(c.distance))) val = Number(c.distance);
+  if (!isFinite(val) || isNaN(val) || val <= 0) return 0;
+  return val;
+}
+
+function getDurationMs(c) {
+  if (!c || typeof c !== 'object') return 0;
+  let ms = 0;
+  if (typeof c.durationMs === 'number') ms = c.durationMs;
+  else if (typeof c.duration === 'number') {
+    ms = c.duration > 86400 ? c.duration : c.duration * 1000;
+  } else if (c.end && c.start && isFinite(c.end) && isFinite(c.start) && c.end > c.start) {
+    ms = c.end - c.start;
+  } else if (typeof c.durationMin === 'number') ms = c.durationMin * 60000;
+  else if (typeof c.min === 'number') ms = c.min * 60000;
+  else if (typeof c.durationMs === 'string' && !isNaN(Number(c.durationMs))) ms = Number(c.durationMs);
+  if (!isFinite(ms) || isNaN(ms) || ms <= 0) return 0;
+  return ms;
+}
+
+function getRpe(c) {
+  if (!c || typeof c !== 'object') return 6;
+  let r = null;
+  if (typeof c.rpe === 'number') r = c.rpe;
+  else if (typeof c.rpe === 'string' && !isNaN(Number(c.rpe))) r = Number(c.rpe);
+  if (r == null || !isFinite(r) || isNaN(r) || r <= 0) return 6;
+  return Math.min(10, Math.max(1, r));
+}
+
+export function acwrRiskCategory(acwr) {
+  const v = Number(acwr);
+  if (!isFinite(v) || isNaN(v) || v < 0.8) return 'undertraining';
+  if (v <= 1.3) return 'optimal';
+  if (v <= 1.5) return 'caution';
+  return 'danger';
+}
+
+export function computeCardioSummaryAndLoad(cardioActivities, opts = {}) {
+  const activities = Array.isArray(cardioActivities) ? cardioActivities : [];
+
+  let endDt = null;
+  if (opts.endDate || opts.today || opts.now) {
+    const raw = opts.endDate || opts.today || opts.now;
+    endDt = new Date(typeof raw === 'string' && raw.length === 10 ? raw + 'T12:00:00' : raw);
+  }
+  if (!endDt || isNaN(endDt.getTime())) {
+    let maxTs = 0;
+    for (const item of activities) {
+      const dStr = cardioDate(item);
+      if (dStr) {
+        const t = new Date(dStr + 'T12:00:00').getTime();
+        if (!isNaN(t) && t > maxTs) maxTs = t;
+      }
+    }
+    const now = new Date();
+    if (maxTs > 0 && now.getTime() - maxTs > 90 * 86400000 && !opts.anchorToToday) {
+      endDt = new Date(maxTs);
+    } else {
+      endDt = now;
+    }
+  }
+
+  const dateStrings = [];
+  for (let i = 27; i >= 0; i--) {
+    const d = new Date(endDt);
+    d.setDate(d.getDate() - i);
+    dateStrings.push(d.toISOString().slice(0, 10));
+  }
+
+  const dateSet7 = new Set(dateStrings.slice(-7));
+  const dateSet28 = new Set(dateStrings);
+  const dailyLoads = new Map(dateStrings.map(ds => [ds, 0]));
+
+  let distM7 = 0, durMs7 = 0, count7 = 0;
+  let distM28 = 0, durMs28 = 0, count28 = 0;
+
+  for (const c of activities) {
+    const ds = cardioDate(c);
+    if (!ds) continue;
+
+    const distM = getDistanceM(c);
+    const durMs = getDurationMs(c);
+    const rpe = getRpe(c);
+    const durMin = durMs / 60000;
+    const sessionLoad = Math.round(durMin * rpe * 100) / 100;
+
+    if (dateSet28.has(ds)) {
+      distM28 += distM;
+      durMs28 += durMs;
+      count28++;
+      dailyLoads.set(ds, (dailyLoads.get(ds) || 0) + sessionLoad);
+    }
+    if (dateSet7.has(ds)) {
+      distM7 += distM;
+      durMs7 += durMs;
+      count7++;
+    }
+  }
+
+  const loadArray = dateStrings.map(ds => dailyLoads.get(ds) || 0);
+  const acuteWindow = loadArray.slice(-7);
+  const chronicWindow = loadArray.slice(-28);
+
+  const acuteTotal = acuteWindow.reduce((s, v) => s + v, 0);
+  const chronicTotal = chronicWindow.reduce((s, v) => s + v, 0);
+
+  const acuteDaily = acuteTotal / 7;
+  const chronicDaily = chronicTotal / 28;
+
+  let acwr = 0;
+  if (chronicDaily > 0) {
+    acwr = acuteDaily / chronicDaily;
+  } else if (acuteDaily > 0) {
+    acwr = 2.0;
+  } else {
+    acwr = 0;
+  }
+  if (!isFinite(acwr) || isNaN(acwr)) acwr = 0;
+
+  const roundedAcwr = Math.round(acwr * 100) / 100;
+  const riskCategory = acwrRiskCategory(roundedAcwr);
+
+  const formatSummary = (distM, durMs, count) => {
+    const km = Math.round((distM / 1000) * 100) / 100;
+    const miles = Math.round((distM / 1609.344) * 100) / 100;
+    const durMin = Math.round((durMs / 60000) * 10) / 10;
+    const hrs = Math.floor(durMin / 60);
+    const mins = Math.round(durMin % 60);
+    const durFormatted = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+    return {
+      distanceM: distM,
+      distanceKm: km,
+      distanceMiles: miles,
+      mileage: miles,
+      km,
+      miles,
+      durationMs: durMs,
+      durationMin: durMin,
+      durationFormatted: durFormatted,
+      duration: durFormatted,
+      count,
+      activities: count
+    };
+  };
+
+  const summary7d = formatSummary(distM7, durMs7, count7);
+  const summary28d = formatSummary(distM28, durMs28, count28);
+
+  return {
+    summary7d,
+    summary28d,
+    last7d: summary7d,
+    last28d: summary28d,
+    volume: {
+      summary7d,
+      summary28d,
+      last7d: summary7d,
+      last28d: summary28d
+    },
+    acuteLoad: Math.round(acuteDaily * 10) / 10,
+    chronicLoad: Math.round(chronicDaily * 10) / 10,
+    acuteTotal: Math.round(acuteTotal * 10) / 10,
+    chronicTotal: Math.round(chronicTotal * 10) / 10,
+    acwr: roundedAcwr,
+    ratio: roundedAcwr,
+    riskCategory,
+    riskZone: riskCategory
+  };
+}
+
+export const computeCardioSummary = computeCardioSummaryAndLoad;
+
 /**
  * Build a job payload.
  *
@@ -314,6 +516,10 @@ function cleanWorkout(w) {
  * @param {object} opts   { kind, intake?, note?, refine?, previous?, handle? }
  */
 export function build(S, uid, opts = {}) {
+  if (uid && typeof uid === 'object' && Object.keys(opts).length === 0) {
+    opts = uid;
+    uid = null;
+  }
   const coach = S?.coach || {};
   const profile = opts.intake || coach.profile || null;
   const p = {
@@ -363,6 +569,17 @@ export function build(S, uid, opts = {}) {
     plan: cleanPlan(S)
   };
 
+  const cardio = computeCardioSummaryAndLoad(S?.cardioActivities, opts);
+  p.cardio = cardio;
+  p.trainingLoad = {
+    acuteLoad: cardio.acuteLoad,
+    chronicLoad: cardio.chronicLoad,
+    acwr: cardio.acwr,
+    riskCategory: cardio.riskCategory,
+    riskZone: cardio.riskZone
+  };
+  p.cardioVolume = cardio.volume;
+
   // What the user already turned down, so the Coach does not re-propose it without new
   // evidence (FR-26). Summaries only — the log's full before/after stays on the device.
   const declined = (coach.log || [])
@@ -380,6 +597,7 @@ export function build(S, uid, opts = {}) {
       workouts: workouts.map(cleanWorkout)
     };
     p.aggregates = aggregates(S, workouts);
+    p.aggregates.cardio = cardio;
     p.bodyweight = {
       goal: S?.targetW ?? null,
       series: (S?.bodyweight || []).filter(b => !p.window.from || b.d >= p.window.from).map(b => ({ d: b.d, w: b.w }))

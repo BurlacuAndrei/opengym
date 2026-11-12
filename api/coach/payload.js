@@ -24,6 +24,10 @@ function handle(uid) {
 }
 
 export function build(S, uid, opts = {}) {
+  if (uid && typeof uid === 'object' && Object.keys(opts).length === 0) {
+    opts = uid;
+    uid = null;
+  }
   const h = opts.handle || handle(uid);
   return shared.build(S, uid, { ...opts, handle: h });
 }
@@ -31,5 +35,6 @@ export function build(S, uid, opts = {}) {
 export {
   CONTRACT, MAX_WEEKS, MAX_SESSIONS, DATA_CATEGORIES,
   stallCount, canonicalPlan, cleanPlan, librarySlice,
-  libraryHas, libraryName, LIBRARY, reviewWindow
+  libraryHas, libraryName, LIBRARY, reviewWindow,
+  computeCardioSummaryAndLoad, computeCardioSummary, acwrRiskCategory
 } from '../../shared/coach/payload.js';

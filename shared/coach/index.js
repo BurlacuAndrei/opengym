@@ -3,7 +3,8 @@ export {
 } from './library.js';
 
 export {
-  modeOf, canonicalPlan, hashPlan, planHash, mergePlan
+  modeOf, canonicalPlan, hashPlan, planHash, mergePlan,
+  getSessions, getFirstSession, normalizeSchedule, getDaySessions, getWeekSessions
 } from './plan.js';
 
 export {
@@ -21,7 +22,8 @@ export {
 
 export {
   CONTRACT, MAX_WEEKS, MAX_SESSIONS, DATA_CATEGORIES,
-  stallCount, cleanPlan, librarySlice, reviewWindow, build
+  stallCount, cleanPlan, librarySlice, reviewWindow, build,
+  computeCardioSummaryAndLoad, computeCardioSummary, acwrRiskCategory
 } from './payload.js';
 
 export {
