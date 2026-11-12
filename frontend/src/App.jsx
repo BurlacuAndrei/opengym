@@ -29,6 +29,7 @@ import Coach from './views/Coach.jsx'
 import CoachIntake from './views/CoachIntake.jsx'
 import CoachProposal from './views/CoachProposal.jsx'
 import RecordingView from './views/RecordingView.jsx'
+import ActivityDetail from './views/ActivityDetail.jsx'
 
 bindUI(useUI)   // lets the shared controls open sheets without importing the store at module scope
 
@@ -122,6 +123,8 @@ function Shell() {
               <Route path="/record" element={<RecordingView />} />
               <Route path="/stats" element={<Stats />} />
               <Route path="/history" element={<History />} />
+              <Route path="/activity/:id" element={<ActivityDetail />} />
+              <Route path="/cardio/:id" element={<ActivityDetail />} />
               <Route path="/library" element={<Library />} />
               <Route path="/settings" element={<Settings />} />
               {/* The Coach screens gate themselves on the instance config; the routes exist

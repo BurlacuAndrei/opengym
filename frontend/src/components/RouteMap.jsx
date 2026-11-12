@@ -234,6 +234,7 @@ export function initLeafletMap(container, options = {}) {
  */
 export default function RouteMap({
   points = [],
+  currentPosition = null,
   state,
   offline,
   width = 300,
@@ -337,6 +338,7 @@ export default function RouteMap({
       >
         <RouteCanvas
           points={points}
+          currentPosition={currentPosition}
           width={width}
           height={height}
           padding={padding}
@@ -425,6 +427,11 @@ export default function RouteMap({
   })
 
   const screenCoords = projectPointsToScreen(points, centerLat, centerLon, zoom, width, height)
+  const hoverCoord = currentPosition ? getCoord(currentPosition) : null
+  const hoverScreenCoords = hoverCoord
+    ? projectPointsToScreen([hoverCoord], centerLat, centerLon, zoom, width, height)
+    : []
+  const hoverPointScreen = hoverScreenCoords.length > 0 ? hoverScreenCoords[0] : null
 
   return (
     <div
@@ -514,6 +521,17 @@ export default function RouteMap({
               cy={screenCoords[screenCoords.length - 1].y}
               r={dotRadius}
               fill={endColor}
+            />
+          )}
+          {hoverPointScreen && (
+            <circle
+              data-testid="route-map-cursor"
+              cx={hoverPointScreen.x}
+              cy={hoverPointScreen.y}
+              r={(dotRadius || 5) + 2}
+              fill="#3b82f6"
+              stroke="#ffffff"
+              strokeWidth={2}
             />
           )}
         </svg>

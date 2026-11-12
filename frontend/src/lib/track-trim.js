@@ -331,3 +331,6 @@ export function trimTrack(track, startIndex, endIndex, options = {}) {
 
   return result
 }
+
+export const trimTrackPoints = trimTrack
+
