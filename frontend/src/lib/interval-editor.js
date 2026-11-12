@@ -38,10 +38,14 @@ export function createIntervalStep(type = 'work', options = {}) {
   let durationMs = null
   let distanceM = null
 
-  if (options.durationMs != null && !isNaN(Number(options.durationMs))) {
+  if (options.durSec != null && !isNaN(Number(options.durSec))) {
+    durationMs = Math.max(0, Number(options.durSec) * 1000)
+  } else if (options.durationMs != null && !isNaN(Number(options.durationMs))) {
     durationMs = Math.max(0, Number(options.durationMs))
   }
-  if (options.distanceM != null && !isNaN(Number(options.distanceM))) {
+  if (options.distM != null && !isNaN(Number(options.distM))) {
+    distanceM = Math.max(0, Number(options.distM))
+  } else if (options.distanceM != null && !isNaN(Number(options.distanceM))) {
     distanceM = Math.max(0, Number(options.distanceM))
   }
 
@@ -90,13 +94,23 @@ export function createRepeatStep(count = 3, workOptions = {}, recoverOptions = {
   const safeCount = Math.max(1, Math.floor(Number(count) || 1))
   const id = options.id || ('repeat-' + uid())
 
+  const defaultWorkDur =
+    workOptions.durationMs != null || workOptions.durSec != null || workOptions.distanceM != null || workOptions.distM != null
+      ? undefined
+      : 120000
+
   const workStep = createIntervalStep('work', {
-    durationMs: 120000, // 2 min default work
+    durationMs: defaultWorkDur,
     ...workOptions
   })
 
+  const defaultRecurDur =
+    recoverOptions.durationMs != null || recoverOptions.durSec != null || recoverOptions.distanceM != null || recoverOptions.distM != null
+      ? undefined
+      : 60000
+
   const recoverStep = createIntervalStep('recover', {
-    durationMs: 60000, // 1 min default recover
+    durationMs: defaultRecurDur,
     ...recoverOptions
   })
 
@@ -477,3 +491,43 @@ export function formatStepTarget(step, unit = 'km') {
 
   return parts.join(' · ')
 }
+
+/**
+ * Flattens interval steps (expanding repeat blocks) into a linear queue of steps.
+ *
+ * @param {Array} steps - Steps array which may contain repeat blocks
+ * @returns {Array} Linear array of flattened steps
+ */
+export function flattenIntervalSteps(steps) {
+  if (!Array.isArray(steps)) return []
+
+  const result = []
+
+  for (const step of steps) {
+    if (!step || typeof step !== 'object') continue
+
+    if (step.type === 'repeat') {
+      const count = Math.max(1, Math.floor(Number(step.count) || 1))
+      const nested = Array.isArray(step.steps)
+        ? step.steps
+        : [step.workStep, step.recoverStep].filter(Boolean)
+
+      for (let r = 0; r < count; r++) {
+        const flattenedSub = flattenIntervalSteps(nested)
+        for (const sub of flattenedSub) {
+          result.push({
+            ...sub,
+            repeatIndex: r + 1,
+            repeatCount: count,
+            repeatId: step.id,
+          })
+        }
+      }
+    } else {
+      result.push({ ...step })
+    }
+  }
+
+  return result
+}
+

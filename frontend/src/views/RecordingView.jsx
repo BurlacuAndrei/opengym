@@ -15,6 +15,7 @@ import {
   finishRecording as defaultFinishRecording,
   discardRecording as defaultDiscardRecording,
 } from '../lib/cardio-recording.js'
+import { createIntervalRunner } from '../lib/interval-runner.js'
 import {
   fmtDist,
   formatPace,
@@ -105,6 +106,8 @@ export default function RecordingView({
   onDiscard = null,
   holdThresholdMs = 1200,
   initialActivityType = 'run',
+  intervalSteps = null,
+  intervalRunner = null,
 }) {
   let navigate = () => {}
   try {
@@ -117,6 +120,19 @@ export default function RecordingView({
 
   // Resolve recorder instance
   const rec = recorder || getCardioRecorder()
+
+  // Interval Runner instance
+  const initialSteps = intervalSteps || rec?.intervalSteps || null
+  const runnerRef = useRef(null)
+  if (!runnerRef.current && (intervalRunner || initialSteps)) {
+    runnerRef.current = intervalRunner || createIntervalRunner({
+      steps: initialSteps,
+      adapter: rec?.adapter,
+      unit,
+      S,
+    })
+  }
+  const [, setRunnerTick] = useState(0)
 
   // Component state
   const [recState, setRecState] = useState(() => rec.getState())
@@ -142,6 +158,9 @@ export default function RecordingView({
       setRecState({ ...state })
       setLiveStats({ ...state.liveStats })
       setPoints(rec.points ? [...rec.points] : [])
+      if (runnerRef.current && state.status === RECORDING_STATUS.RECORDING) {
+        runnerRef.current.update(state.liveStats).then(() => setRunnerTick(t => t + 1))
+      }
     }
 
     // Initial sync
@@ -158,7 +177,11 @@ export default function RecordingView({
     if (recState?.status !== RECORDING_STATUS.RECORDING) return
     const interval = setInterval(() => {
       // Re-read liveStats or trigger re-render
-      setLiveStats({ ...rec.getLiveStats() })
+      const stats = rec.getLiveStats()
+      setLiveStats({ ...stats })
+      if (runnerRef.current) {
+        runnerRef.current.update(stats).then(() => setRunnerTick(t => t + 1))
+      }
     }, 1000)
     return () => clearInterval(interval)
   }, [rec, recState?.status])
@@ -218,6 +241,10 @@ export default function RecordingView({
   // Action handlers
   const handleStart = async () => {
     await (rec.startRecording ? rec.startRecording({ type: selectedType }) : defaultStartRecording({ type: selectedType }))
+    if (runnerRef.current && runnerRef.current.status === 'idle') {
+      await runnerRef.current.start(rec.getLiveStats ? rec.getLiveStats() : {})
+      setRunnerTick(t => t + 1)
+    }
   }
 
   const handlePause = () => {
@@ -234,9 +261,10 @@ export default function RecordingView({
     if (isFinishing) return
     setIsFinishing(true)
     try {
+      const intervalSplits = runnerRef.current ? runnerRef.current.splits : null
       const activity = rec.finishRecording
-        ? await rec.finishRecording()
-        : await defaultFinishRecording()
+        ? await rec.finishRecording({ intervalSplits })
+        : await defaultFinishRecording({ intervalSplits })
       setFinalizedActivity(activity)
     } catch (err) {
       console.error('Failed to finish recording:', err)
@@ -544,6 +572,61 @@ export default function RecordingView({
           <span data-testid="accuracy-label">{gpsStatus.label}</span>
         </div>
       </div>
+
+      {/* Structured Interval Mode Step Banner (Issue #76) */}
+      {runnerRef.current && (
+        <div
+          className="interval-banner card"
+          data-testid="interval-runner-banner"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '10px 14px',
+            marginBottom: 12,
+            background: 'var(--surface-1)',
+            borderLeft: `4px solid ${
+              runnerRef.current.status === 'cooldown'
+                ? 'var(--yellow, #f59e0b)'
+                : 'var(--acc, #3b82f6)'
+            }`,
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em',
+                color:
+                  runnerRef.current.status === 'cooldown'
+                    ? 'var(--yellow, #f59e0b)'
+                    : 'var(--acc, #3b82f6)',
+              }}
+              data-testid="interval-runner-status"
+            >
+              {runnerRef.current.status === 'cooldown' ? t('Cooldown') : t('Interval Mode')}
+            </div>
+            <div
+              style={{ fontSize: 15, fontWeight: 700, marginTop: 2 }}
+              data-testid="interval-current-step-label"
+            >
+              {runnerRef.current.currentStep
+                ? runnerRef.current.getStepLabel()
+                : t('Workout Complete')}
+            </div>
+          </div>
+          {runnerRef.current.currentStep && (
+            <div
+              style={{ fontSize: 13, color: 'var(--muted, #94a3b8)', fontWeight: 600 }}
+              data-testid="interval-step-cue"
+            >
+              {runnerRef.current.getStepCue()}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Large Hero Metric: Primary Distance */}
       <div

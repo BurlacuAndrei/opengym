@@ -192,6 +192,32 @@ export function formatSplitCue(split, options = {}) {
 }
 
 /**
+ * Speaks an arbitrary cardio voice cue via device adapter TTS with ducking enabled.
+ * If voice cues are disabled in settings/store, suppresses speech.
+ *
+ * @param {string} text - Spoken message
+ * @param {Object} [options={}] - Options (adapter, speak, S, settings, voiceCues)
+ * @returns {Promise<{ spoken: boolean, text?: string, reason?: string, cue?: any }>}
+ */
+export async function speakCardioCue(text, options = {}) {
+  const settingSource =
+    options.voiceCues !== undefined
+      ? options.voiceCues
+      : (options.S ?? options.settings)
+
+  const enabled = isVoiceCuesEnabled(settingSource)
+  if (!enabled) {
+    return { spoken: false, reason: 'disabled' }
+  }
+
+  const adapter = options.adapter
+  const speakFn = options.speak || (adapter ? (t, o) => adapter.speak(t, o) : defaultSpeak)
+
+  const cue = await speakFn(text, { duck: true })
+  return { spoken: true, text, cue }
+}
+
+/**
  * Speaks a split cue via cardio device adapter TTS with ducking enabled.
  * If voice cues are disabled in settings/store, suppresses speech.
  *
@@ -211,11 +237,7 @@ export async function speakSplitCue(split, options = {}) {
   }
 
   const text = formatSplitCue(split, options)
-  const adapter = options.adapter
-  const speakFn = options.speak || (adapter ? (t, o) => adapter.speak(t, o) : defaultSpeak)
-
-  const cue = await speakFn(text, { duck: true })
-  return { spoken: true, text, cue }
+  return speakCardioCue(text, options)
 }
 
 export const announceSplit = speakSplitCue
