@@ -287,6 +287,7 @@ export class CardioRecorder {
       isPaused: this.isPaused,
       isIdle: this.isIdle,
       pointsCount: this.points.length,
+      accuracy: this.points.length ? (this.points[this.points.length - 1].accuracy ?? null) : null,
       liveStats: { ...this.liveStats },
     }
   }
