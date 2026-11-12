@@ -229,6 +229,48 @@ export function drawRouteOnCanvas(canvas, points, options = {}) {
   ctx.fillStyle = endColor
   ctx.fill()
 
+  // 4. Optional current position / route follower overlay
+  if (options.currentPosition) {
+    const curCoord = getCoord(options.currentPosition)
+    const bounds = getRouteBounds(points)
+    if (curCoord && bounds) {
+      const drawWidth = Math.max(1, width - padding * 2)
+      const drawHeight = Math.max(1, height - padding * 2)
+      const midLat = (bounds.minLat + bounds.maxLat) / 2
+      const cosLat = Math.cos((midLat * Math.PI) / 180)
+      const aspectCorrection = Math.abs(cosLat) > 0.001 ? Math.abs(cosLat) : 1
+      const lonSpan = bounds.maxLon - bounds.minLon
+      const latSpan = bounds.maxLat - bounds.minLat
+      const geoWidth = lonSpan * aspectCorrection
+      const geoHeight = latSpan
+      const scaleX = geoWidth > 0 ? drawWidth / geoWidth : 1
+      const scaleY = geoHeight > 0 ? drawHeight / geoHeight : 1
+      const scale = Math.min(
+        geoWidth > 0 ? scaleX : scaleY,
+        geoHeight > 0 ? scaleY : scaleX
+      )
+      const usedWidth = geoWidth * scale
+      const usedHeight = geoHeight * scale
+      const offsetX = padding + (drawWidth - usedWidth) / 2
+      const offsetY = padding + (drawHeight - usedHeight) / 2
+
+      const cx = offsetX + (curCoord.lon - bounds.minLon) * aspectCorrection * scale
+      const cy = offsetY + (bounds.maxLat - curCoord.lat) * scale
+
+      const dotColor = options.isOffCourse
+        ? (options.offCourseColor || '#ef4444')
+        : (options.currentPositionColor || '#3b82f6')
+
+      ctx.beginPath()
+      ctx.arc(cx, cy, (dotRadius || 5) + 1, 0, Math.PI * 2)
+      ctx.fillStyle = dotColor
+      ctx.fill()
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 2
+      ctx.stroke()
+    }
+  }
+
   return true
 }
 
@@ -238,6 +280,8 @@ export function drawRouteOnCanvas(canvas, points, options = {}) {
  */
 export default function RouteCanvas({
   points = [],
+  currentPosition = null,
+  isOffCourse = false,
   width = 300,
   height = 200,
   padding = 16,
@@ -245,6 +289,8 @@ export default function RouteCanvas({
   lineWidth = 3,
   startColor = '#22c55e',
   endColor = '#ef4444',
+  currentPositionColor = '#3b82f6',
+  offCourseColor = '#ef4444',
   dotRadius = 5,
   backgroundColor = null,
   className = 'route-canvas',
@@ -266,11 +312,17 @@ export default function RouteCanvas({
       lineWidth,
       startColor,
       endColor,
+      currentPosition,
+      isOffCourse,
+      currentPositionColor,
+      offCourseColor,
       dotRadius,
       backgroundColor,
     })
   }, [
     points,
+    currentPosition,
+    isOffCourse,
     width,
     height,
     padding,
@@ -278,6 +330,8 @@ export default function RouteCanvas({
     lineWidth,
     startColor,
     endColor,
+    currentPositionColor,
+    offCourseColor,
     dotRadius,
     backgroundColor,
   ])

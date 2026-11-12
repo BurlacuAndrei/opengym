@@ -257,6 +257,38 @@ describe('RouteCanvas & Android Recording UI (Issue #62)', () => {
       expect(fills[0].fillStyle).toBe('#22c55e') // Green start
       expect(fills[1].fillStyle).toBe('#ef4444') // Red end
     })
+
+    it('draws current position overlay and styles it according to isOffCourse status', () => {
+      const { canvas, operations } = createMockCanvas(300, 200)
+      const points = [
+        { lat: 52.5, lon: 13.4 },
+        { lat: 52.52, lon: 13.42 },
+      ]
+
+      // 1. On course: draws current position dot
+      drawRouteOnCanvas(canvas, points, {
+        currentPosition: { lat: 52.51, lon: 13.41 },
+        isOffCourse: false,
+        currentPositionColor: '#3b82f6',
+      })
+
+      const onCourseArcs = operations.filter(op => op.type === 'arc')
+      expect(onCourseArcs).toHaveLength(3)
+      const fills = operations.filter(op => op.type === 'fill')
+      expect(fills[fills.length - 1].fillStyle).toBe('#3b82f6')
+
+      // 2. Off course: draws off course dot
+      const { canvas: canvasOff, operations: opsOff } = createMockCanvas(300, 200)
+      drawRouteOnCanvas(canvasOff, points, {
+        currentPosition: { lat: 52.55, lon: 13.45 },
+        isOffCourse: true,
+        offCourseColor: '#ef4444',
+      })
+      const offCourseArcs = opsOff.filter(op => op.type === 'arc')
+      expect(offCourseArcs).toHaveLength(3)
+      const offFills = opsOff.filter(op => op.type === 'fill')
+      expect(offFills[offFills.length - 1].fillStyle).toBe('#ef4444')
+    })
   })
 
   // -------------------------------------------------------------------------
