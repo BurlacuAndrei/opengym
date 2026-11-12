@@ -10,6 +10,7 @@ import {
   importBackup as libImportBackup
 } from '../lib/backup.js'
 import { openConflictDialog, openRegisterImportDialog } from '../components/ConflictDialog.jsx'
+import { createSyncEngine, hasData } from '../lib/sync-engine.js'
 import { getServerUrl, clearServerConfig } from '../lib/server-config.js'
 import { clearToken } from '../lib/token-storage.js'
 import * as privacy from '../lib/privacy.js'
@@ -117,8 +118,6 @@ function loadState() {
   return clone(DEF)
 }
 
-const hasData = st => !!(st && ((st.workouts || []).length || (st.routines || []).length || (st.bodyweight || []).length || (st.cardioActivities || []).length || (st.gear || []).length))
-
 export const CARDIO_TYPES = ['run', 'ride', 'hike', 'walk']
 
 export function validateCardioActivity(act) {
@@ -212,56 +211,26 @@ export function normalizeCardioActivity(act = {}) {
 }
 
 export const useStore = create((set, get) => {
-  let pushTm = null
-  let saveTm = null
+  const syncEngine = createSyncEngine({
+    getState: get,
+    setState: set,
+    storageKey: KEY,
+    def: DEF,
+    debounceMs: 1500,
+    migrateSchedule,
+    createLocalBackup,
+    onConflict: ({ serverState, resolveConflict }) => {
+      openConflictDialog({ serverState, resolveConflict })
+    },
+    onRegisterImport: (opts) => {
+      openRegisterImportDialog(opts)
+    },
+    reconcileTracksAndRoutes: () => reconcileTracksAndRoutes({ store: useStore }),
+    cleanupCachedServerTracks,
+    getCardioAdapter,
+  })
 
-  // Mobile build: mirror the state into a file in the app's data directory (survives WebView
-  // storage eviction) and keep the native reminder schedule in step with the weekly plan.
-  const nativePersist = () => {
-    clearTimeout(saveTm)
-    saveTm = setTimeout(() => { saveTm = null; nativeSave(get().S); syncReminder(get().S) }, 800)
-  }
-
-  const persist = (S, push = true) => {
-    migrateSchedule(S)
-    S._ts = Date.now()
-    registerCustom(S.customEx)
-    localStorage.setItem(KEY, JSON.stringify(S))
-    set({ S })
-    if (MOBILE) nativePersist()
-    if (push && get().user) {
-      clearTimeout(pushTm)
-      pushTm = setTimeout(() => get().pushState(), 1500)
-    }
-  }
-
-  // A setting changed right before switching away/closing the tab must not get lost mid-debounce
-  // (e.g. setting the reminder time then immediately backgrounding to test it). On mobile the
-  // same applies to the file mirror — backgrounding is often the last thing before the OS
-  // kills the app.
-  if (typeof document !== 'undefined') {
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState !== 'hidden') return
-      if (MOBILE && saveTm) {
-        clearTimeout(saveTm)
-        saveTm = null
-        nativeSave(get().S)
-      }
-      if (pushTm) {
-        clearTimeout(pushTm)
-        pushTm = null
-        get().pushState()
-      }
-    })
-  }
-
-  if (typeof window !== 'undefined' && window.addEventListener) {
-    window.addEventListener('online', () => get().handleOnline?.())
-  }
-
-  try {
-    CapApp?.addListener?.('resume', () => get().handleResume?.())?.catch?.(() => {})
-  } catch (e) { /* ignore */ }
+  const persist = (S, push = true) => syncEngine.persist(S, push)
 
   // Everything a sign-out leaves behind on this device, whichever way it was triggered.
   const clearLocalSession = () => {
@@ -519,190 +488,18 @@ export const useStore = create((set, get) => {
       set({ user: u, sessionExpired: false, reAuthNeeded: false })
     },
 
-    async pushState() {
-      if (!get().user) return
-      clearTimeout(pushTm)
-      try {
-        const rawTs = localStorage.getItem('gym_last_synced_ts')
-        const baseTs = rawTs && !Number.isNaN(Number(rawTs)) ? Number(rawTs) : undefined
-        const body = { state: get().S }
-        if (baseTs !== undefined) body.baseTs = baseTs
-        const res = await api('/api/data', { method: 'PUT', body: JSON.stringify(body) })
-        localStorage.setItem('gym_last_synced_ts', String(res?.ts || get().S._ts || ''))
-        localStorage.removeItem('gym_dirty')
-        if (MOBILE) nativeSave(get().S)
-      } catch (e) {
-        localStorage.setItem('gym_dirty', '1')
-        if (e.status === 409 || e.statusCode === 409) {
-          openConflictDialog({ serverState: e.serverState || e.state || e.data?.state || e.data?.serverState })
-        } else if (e.status === 401 || e.statusCode === 401) {
-          set({ sessionExpired: true, reAuthNeeded: true })
-        }
-      }
-    },
-    async pullState(prefetchedState) {
-      try {
-        const state = prefetchedState !== undefined ? prefetchedState : (await api('/api/data'))?.state
-        const S = get().S
-        const dirty = localStorage.getItem('gym_dirty') === '1'
-        if (state && dirty && (state._ts || 0) > (S._ts || 0)) {
-          openConflictDialog({ serverState: state })
-        } else if (state && (!hasData(S) || ((state._ts || 0) >= (S._ts || 0) && !dirty))) {
-          const active = S.active
-          const next = Object.assign(clone(DEF), state)
-          if (active) next.active = active
-          persist(next, false)
-          if (state._ts) localStorage.setItem('gym_last_synced_ts', String(state._ts))
-        } else if (hasData(S)) { await get().pushState() }
-      } catch (e) {
-        if (e.status === 401 || e.statusCode === 401) {
-          set({ sessionExpired: true, reAuthNeeded: true })
-        }
-        /* offline — keep local */
-      }
-    },
-
-    async handleResume() {
-      if (!get().isServerMode()) return
-      await get().pullState()
-    },
-
-    async handleOnline() {
-      if (!get().isServerMode()) return
-      const dirty = localStorage.getItem('gym_dirty') === '1'
-      if (dirty) {
-        await get().pushState()
-      } else {
-        await get().pullState()
-      }
-    },
-
-    async reconcileOnRegister(choice, serverData) {
-      const S = get().S
-      const phoneHasData = hasData(S)
-      if (!phoneHasData) {
-        await get().pullState(serverData)
-        return
-      }
-
-      const c = typeof choice === 'string' ? choice.toLowerCase() : choice
-      if (c === 'upload' || c === true) {
-        await get().pushState()
-        return
-      }
-
-      if (c === 'decline' || c === 'fresh' || c === false) {
-        createLocalBackup(S)
-        let serverState = serverData
-        if (serverState === undefined) {
-          try {
-            const res = await api('/api/data')
-            serverState = res?.state ?? null
-          } catch (e) {
-            serverState = null
-          }
-        }
-        const next = Object.assign(clone(DEF), serverState || {})
-        get().replaceState(next, false)
-        if (serverState?._ts) localStorage.setItem('gym_last_synced_ts', String(serverState._ts))
-        else localStorage.removeItem('gym_last_synced_ts')
-        localStorage.removeItem('gym_dirty')
-        if (MOBILE) nativeSave(get().S)
-        return
-      }
-
-      openRegisterImportDialog({
-        onChoice: async userChoice => {
-          await get().reconcileOnRegister(userChoice, serverData)
-        }
-      })
-    },
-
-    async reconcileOnConnect(serverData) {
-      let serverState = serverData
-      if (serverState === undefined) {
-        try {
-          const res = await api('/api/data')
-          serverState = res?.state ?? null
-        } catch (e) {
-          return
-        }
-      }
-
-      const S = get().S
-      const phoneHasData = hasData(S)
-      const serverHasData = hasData(serverState)
-
-      if (phoneHasData && serverHasData) {
-        createLocalBackup(S)
-        openConflictDialog({ serverState })
-      } else if (!phoneHasData && serverHasData) {
-        await get().pullState(serverState)
-        if ((get().S.cardioActivities?.length || get().S.routes?.length)) {
-          reconcileTracksAndRoutes({ store: useStore }).catch(() => {})
-        }
-      } else if (phoneHasData && !serverHasData) {
-        await get().pushState()
-        if ((get().S.cardioActivities?.length || get().S.routes?.length)) {
-          reconcileTracksAndRoutes({ store: useStore }).catch(() => {})
-        }
-      }
-    },
-
-    async handleReauth(newUser, serverData) {
-      const prevUser = get().user
-      const isSame = Boolean(prevUser?.id && newUser?.id && prevUser.id === newUser.id)
-
-      if (isSame) {
-        get().setUser(newUser)
-        const dirty = localStorage.getItem('gym_dirty') === '1'
-        if (dirty) {
-          await get().pushState()
-        }
-      } else {
-        createLocalBackup(get().S)
-        localStorage.removeItem('gym_dirty')
-        localStorage.removeItem('gym_last_synced_ts')
-        get().setUser(newUser)
-        await get().reconcileOnConnect(serverData)
-      }
-    },
-
-    async disconnectServer(opts = {}) {
-      const removeData = typeof opts === 'boolean' ? opts : Boolean(opts?.removeData || opts?.removeServerData)
-      clearTimeout(pushTm)
-      await clearToken().catch(() => {})
-      clearServerConfig()
-      get().setUser(null)
-      get().setGuest(true)
-      localStorage.removeItem('gym_dirty')
-      localStorage.removeItem('gym_last_synced_ts')
-      if (removeData) {
-        persist(clone(DEF), false)
-        await cleanupCachedServerTracks({ adapter: getCardioAdapter(), all: true }).catch(() => {})
-      } else {
-        if (MOBILE) {
-          nativeSave(get().S)
-        }
-      }
-    },
-
-    async resolveConflict(choice, serverState) {
-      const c = (choice || '').toLowerCase()
-      if (c === 'server') {
-        createLocalBackup(get().S)
-        if (serverState) {
-          const active = get().S?.active
-          const next = Object.assign(clone(DEF), serverState)
-          if (active) next.active = active
-          get().replaceState(next, false)
-          if (serverState._ts) localStorage.setItem('gym_last_synced_ts', String(serverState._ts))
-        }
-        localStorage.removeItem('gym_dirty')
-      } else if (c === 'device') {
-        await get().pushState()
-      }
-    },
+    syncEngine,
+    persist,
+    flushPending: () => syncEngine.flushPending(),
+    pushState: () => syncEngine.pushState(),
+    pullState: (prefetchedState) => syncEngine.pullState(prefetchedState),
+    handleResume: () => syncEngine.handleResume(),
+    handleOnline: () => syncEngine.handleOnline(),
+    reconcileOnRegister: (choice, serverData) => syncEngine.reconcileOnRegister(choice, serverData),
+    reconcileOnConnect: (serverData) => syncEngine.reconcileOnConnect(serverData),
+    handleReauth: (newUser, serverData) => syncEngine.handleReauth(newUser, serverData),
+    disconnectServer: (opts) => syncEngine.disconnectServer(opts),
+    resolveConflict: (choice, serverState) => syncEngine.resolveConflict(choice, serverState),
 
     async signOut() {
       try { await get().pushState(); await api('/api/logout', { method: 'POST', body: '{}' }) } catch (e) { /* */ }

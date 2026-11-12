@@ -1,6 +1,5 @@
 import { t } from '../lib/i18n.js'
 import { useUI } from '../store/useUI.js'
-import { useStore } from '../store/useStore.js'
 import { Button } from './ui.jsx'
 
 export function ConflictDialog({ serverState, onResolve, close }) {
@@ -48,7 +47,7 @@ export function ConflictDialog({ serverState, onResolve, close }) {
 }
 
 export function openConflictDialog(opts = {}) {
-  const { serverState, onResolve, autoResolve = true, locked = false } = opts
+  const { serverState, onResolve, autoResolve = true, locked = false, resolveConflict } = opts
   return new Promise(resolve => {
     useUI.getState().openSheet(
       close => (
@@ -58,7 +57,7 @@ export function openConflictDialog(opts = {}) {
           onResolve={async choice => {
             close()
             if (autoResolve && (choice === 'device' || choice === 'server')) {
-              await useStore.getState().resolveConflict(choice, serverState)
+              await resolveConflict?.(choice, serverState)
             }
             onResolve?.(choice)
             resolve(choice)
