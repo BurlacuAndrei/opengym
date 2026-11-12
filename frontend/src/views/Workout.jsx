@@ -13,6 +13,7 @@ import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, topWeigh
 import Icon from '../components/Icon.jsx'
 import { Button, Check, NumberField } from '../components/ui.jsx'
 import { nextPrescription, applyPrescription } from '../lib/progression.js'
+import { getRoutineRestSec } from '../lib/routine-kind.js'
 import { glyphOf } from '../lib/glyphs.js'
 
 /* ---------- start chooser (no active workout) ---------- */
@@ -193,7 +194,9 @@ function ActiveWorkout() {
         beep(S.sound, 1040, 0.12); vibrate(30)
         const isLastExInUnit = idx === unit[unit.length - 1]
         const unitDone = unit.every(ui => (ui === idx ? e : A.entries[ui]).sets.every(x => x.done))
-        if (isLastExInUnit && !unitDone) startRest(S.restSec)
+        const routine = S.routines?.find(r => r.id === A.routineId)
+        const restSec = getRoutineRestSec(routine, S.restSec)
+        if (isLastExInUnit && !unitDone) startRest(restSec)
         else if (unitDone) stopRest()
         if (unitDone && isLastUnit) workoutDone = true      // last exercise's last set → done
         // Only reps training has a "working weight" worth confirming — a bodyweight plank

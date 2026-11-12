@@ -11,6 +11,12 @@ import Icon from '../components/Icon.jsx'
 import { glyphOf } from '../lib/glyphs.js'
 import { Button, SelectRow } from '../components/ui.jsx'
 import { POLICIES_FOR, POLICY_NAME, POLICY_DESC } from '../lib/progression.js'
+import {
+  ROUTINE_KINDS,
+  ROUTINE_KIND_LABELS,
+  ROUTINE_KIND_ICONS,
+  getRoutineKind
+} from '../lib/routine-kind.js'
 import BodyMap from '../components/BodyMap.jsx'
 import { loadOfRoutine, rankOf, MUSCLE_NAME } from '../lib/muscles.js'
 
@@ -48,6 +54,19 @@ export default function RoutineEdit() {
     </div>
 
     <div className="sect-b" style={{ marginBottom: 16 }}>
+      <SelectRow icon={ROUTINE_KIND_ICONS[getRoutineKind(r)] || 'dumbbell'} title={t('Kind')} sheetTitle={t('Kind')}
+        value={getRoutineKind(r)} onChange={v => update(s => { s.routines.find(x => x.id === id).kind = v })}
+        options={ROUTINE_KINDS.map(k => ({ value: k, label: t(ROUTINE_KIND_LABELS[k]) }))} />
+      <SelectRow icon="timer" iconTint="var(--orange)" title={t('Rest timer')} sheetTitle={t('Rest timer')}
+        value={r.restSec || 0} onChange={v => update(s => {
+          const target = s.routines.find(x => x.id === id)
+          if (!v) delete target.restSec
+          else target.restSec = v
+        })}
+        options={[
+          { value: 0, label: t('Default ({0}s)', S.restSec || 90) },
+          ...[30, 45, 60, 90, 120, 150, 180].map(v => ({ value: v, label: v + 's' }))
+        ]} />
       <SelectRow icon="chartLine" title={t('Progression')} sheetTitle={t('Progression')}
         value={r.prog || 'linear'} onChange={v => update(s => { s.routines.find(x => x.id === id).prog = v })}
         options={POLICIES_FOR.reps.map(p => ({ value: p, label: t(POLICY_NAME[p]), subtitle: t(POLICY_DESC[p]) }))} />

@@ -10,4 +10,4 @@ const SPEC = [
 
 // Fresh routine objects (new ids) — [push, pull, legs].
 export const starterRoutines = () =>
-  SPEC.map(([name, emoji, list]) => ({ id: uid(), name, emoji, ex: list.map(([id, sets, reps]) => ({ id, sets, reps, weight: 0 })) }))
+  SPEC.map(([name, emoji, list]) => ({ id: uid(), name, emoji, kind: 'gym', ex: list.map(([id, sets, reps]) => ({ id, sets, reps, weight: 0 })) }))
