@@ -137,7 +137,7 @@ describe('staleness', () => {
 
 describe('applying changes', () => {
   it('has an implementation for every type the server can send', async () => {
-    const { CHANGE_TYPES: serverTypes } = await import('../../../api/coach/validate.js')
+    const { CHANGE_TYPES: serverTypes } = await import('shared/coach/validate.js')
     expect([...CHANGE_TYPES].sort()).toEqual([...serverTypes].sort())
   })
 

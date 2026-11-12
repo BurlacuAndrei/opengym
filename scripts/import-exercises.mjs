@@ -15,7 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const exdbPath = join(root, 'frontend', 'src', 'lib', 'exercises-data.js');
-const coachLibPath = join(root, 'api', 'coach', 'library.json');
+const coachLibPath = join(root, 'shared', 'coach', 'library.json');
 
 const YOGA_API_URL = 'https://yoga-api-nzy4.onrender.com/v1/poses';
 const FREE_DB_URL = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/dist/exercises.json';
@@ -225,7 +225,7 @@ export async function run() {
   writeFileSync(exdbPath, outCode);
   console.log(`Wrote ${exdbPath} (${combined.length} total exercises, ${(outCode.length / 1024).toFixed(0)} KB)`);
 
-  // 5. Update api/coach/library.json
+  // 5. Update shared/coach/library.json
   const coachIndex = combined.map(e => ({ id: e.id, n: e.n, bp: e.bp, tg: e.tg, eq: e.eq }));
   const coachJson = JSON.stringify({
     generated_from: 'frontend/src/lib/exercises-data.js',

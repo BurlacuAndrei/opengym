@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { tempData } from './helpers.mjs';
 
 tempData();
-const { extractJSON, validatePlan, validateReview, CHANGE_TYPES } = await import('../coach/validate.js');
+const { extractJSON, validatePlan, validateReview, CHANGE_TYPES } = await import('../../shared/coach/validate.js');
 
 const PLAN = {
   routines: [{

@@ -80,9 +80,9 @@ describe('Exercise catalogue and schema (Issue #43)', () => {
     }
   })
 
-  it('keeps api/coach/library.json synchronized with EXDB', () => {
-    // Resolve api/coach/library.json relative to repository root
-    const libraryPath = join(process.cwd(), '..', 'api', 'coach', 'library.json')
+  it('keeps shared/coach/library.json synchronized with EXDB', () => {
+    // Resolve shared/coach/library.json relative to repository root
+    const libraryPath = join(process.cwd(), '..', 'shared', 'coach', 'library.json')
     const raw = readFileSync(libraryPath, 'utf8')
     const coachLib = JSON.parse(raw)
 

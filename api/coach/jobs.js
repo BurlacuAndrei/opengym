@@ -15,17 +15,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import * as cfgStore from './config.js';
 import { adapterFor } from './adapters/index.js';
 import * as payloadLib from './payload.js';
-import { extractJSON, validatePlan, validateReview, contractOK } from './validate.js';
+import { extractJSON, validatePlan, validateReview, contractOK } from '../../shared/coach/validate.js';
 import { buildPrompt } from '../../shared/coach/prompts.js';
 import { hashPlan } from '../../shared/coach/plan.js';
 
 const DATA = process.env.DATA_DIR || '/data';
 const COACH_DIR = path.join(DATA, 'coach');
-const PROMPTS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'prompts');
 
 export const TIMEOUT_MS = 5 * 60000;
 const MAX_CONCURRENT = 2;          // these are minutes-scale jobs on often-single-core boxes
