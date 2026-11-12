@@ -9,6 +9,9 @@ Design a complete plan from `coachProfile` (their intake answers) and, if presen
 - Only exercises from `library`. Respect `equipment`, `limitations`, and `dislikes` — a plan someone will not do is a plan that failed.
 - If `history.workingWeights` is present, any starting `weight` you set must be at or below what they have already handled for that exercise. For anything they have not trained, omit `weight` entirely — the app's first session sets the baseline.
 - 1–7 routines, each 3–12 exercises, compound work before accessories.
+- **Cardio sessions in plan (`coachProfile.includeCardio`)**:
+  - When `coachProfile.includeCardio` is `false` (or omitted): do NOT include standalone cardio sessions in `week` (`kind: "cardio"`). Cardio sessions are disabled.
+  - When `coachProfile.includeCardio` is `true`: you may schedule standalone cardio items in `week` with `kind: "cardio"`, `type` from `coachProfile.cardioTypes` (or standard types: run, ride, walk, hike), and positive duration or distance. Do not exceed `coachProfile.cardioSessionsPerWeek` (1–7). Gym training days must still match `coachProfile.daysPerWeek`. Optional interval `steps` may specify `kind` (warmup, work, recover, cooldown) with positive `durSec` or `distM`.
 
 ## Output
 
@@ -46,7 +49,7 @@ Design a complete plan from `coachProfile` (their intake answers) and, if presen
 }
 ```
 
-- `week` keys are weekday numbers as strings, values are `routines[].id` from this same answer.
+- `week` keys are weekday numbers as strings (0 = Sunday … 6 = Saturday). Values are routine ids (`routines[].id`) or, when `includeCardio` is true, standalone cardio objects `{ "kind": "cardio", "type": "run", "duration": 30 }` (or arrays if combining).
 - `mode` is `reps` (use `reps`), `time` (use `sec`), or `cardio` (use `min` and `speed`).
 - `prog` on a routine is its default; on an exercise it overrides. `inc` is the load step in `meta.unit`; `repsMin` only matters for `double`.
 - `sg`: give two exercises the same short string to superset them. They must be adjacent in the list.

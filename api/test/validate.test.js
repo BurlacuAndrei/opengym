@@ -263,3 +263,118 @@ test('mergePlan treats customEx as first-class exercises across review change op
   const hash = planHash(merged);
   assert.equal(typeof hash, 'string');
 });
+
+/* =============================== Coach cardio toggle & validation (Issue #77) =============================== */
+
+test('validatePlan rejects cardio sessions in week when includeCardio is false or omitted (Issue #77)', () => {
+  const planData = {
+    routines: [{ id: 'r1', name: 'Upper', ex: [{ id: '0001', sets: 3, reps: 10 }] }],
+    week: { 1: 'r1', 3: { kind: 'cardio', type: 'run', duration: 30 } }
+  };
+
+  // Omitted
+  const r1 = validatePlan(planData);
+  assert.equal(r1.ok, false);
+  assert.ok(r1.errors.some(e => e.includes('Cardio sessions are disabled in coach profile')));
+
+  // Explicit false
+  const r2 = validatePlan(planData, { coachProfile: { includeCardio: false } });
+  assert.equal(r2.ok, false);
+  assert.ok(r2.errors.some(e => e.includes('Cardio sessions are disabled in coach profile')));
+});
+
+test('validatePlan accepts cardio sessions when includeCardio is true and respects profile bounds (Issue #77)', () => {
+  const r = validatePlan(
+    {
+      routines: [
+        { id: 'r1', name: 'Full Body', ex: [{ id: '0001', sets: 3, reps: 10 }] }
+      ],
+      week: {
+        1: 'r1',
+        2: {
+          kind: 'cardio',
+          type: 'run',
+          duration: 30,
+          steps: [
+            { kind: 'warmup', durSec: 300 },
+            { kind: 'work', distM: 3000 },
+            { kind: 'cooldown', durSec: 300 }
+          ]
+        }
+      }
+    },
+    {
+      coachProfile: {
+        includeCardio: true,
+        daysPerWeek: 1,
+        cardioSessionsPerWeek: 2,
+        cardioTypes: ['run', 'walk'],
+        cardioGoal: 'Aerobic base'
+      }
+    }
+  );
+  assert.equal(r.ok, true, `Validation should succeed: ${JSON.stringify(r.errors)}`);
+  assert.equal(r.bundle.week[2].kind, 'cardio');
+  assert.equal(r.bundle.week[2].type, 'run');
+  assert.equal(r.bundle.week[2].steps.length, 3);
+});
+
+test('validatePlan rejects cardio when count exceeds cardioSessionsPerWeek (Issue #77)', () => {
+  const r = validatePlan(
+    {
+      routines: [{ id: 'r1', name: 'A', ex: [{ id: '0001', sets: 3, reps: 10 }] }],
+      week: {
+        1: 'r1',
+        2: { kind: 'cardio', type: 'run', duration: 25 },
+        4: { kind: 'cardio', type: 'ride', duration: 40 }
+      }
+    },
+    {
+      coachProfile: {
+        includeCardio: true,
+        daysPerWeek: 1,
+        cardioSessionsPerWeek: 1
+      }
+    }
+  );
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.some(e => e.includes('2 cardio sessions which exceeds cardioSessionsPerWeek of 1')));
+});
+
+test('validateReview enforces includeCardio and interval steps (Issue #77)', () => {
+  // Rejected when includeCardio is false or omitted
+  const rDisabled = review([
+    change({
+      type: 'week',
+      target: { weekday: 2 },
+      after: { kind: 'cardio', type: 'run', duration: 30 }
+    })
+  ]);
+  assert.equal(rDisabled.ok, false);
+  assert.ok(rDisabled.errors.some(e => e.includes('Cardio sessions are disabled in coach profile')));
+
+  // Accepted when includeCardio is true
+  const rEnabled = validateReview(
+    {
+      coach_contract: 1,
+      summary: 'Add easy cardio',
+      changes: [
+        change({
+          type: 'week',
+          target: { weekday: 2 },
+          after: {
+            kind: 'cardio',
+            type: 'walk',
+            duration: 45,
+            steps: [{ kind: 'work', durSec: 2700 }]
+          }
+        })
+      ]
+    },
+    PLAN,
+    { coachProfile: { includeCardio: true, cardioSessionsPerWeek: 2 } }
+  );
+  assert.equal(rEnabled.ok, true, `Review should validate: ${JSON.stringify(rEnabled.errors)}`);
+  assert.equal(rEnabled.proposal.changes[0].after.kind, 'cardio');
+  assert.equal(rEnabled.proposal.changes[0].after.type, 'walk');
+});

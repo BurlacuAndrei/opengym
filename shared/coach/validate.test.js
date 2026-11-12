@@ -245,3 +245,321 @@ test('mergePlan handles remove-exercise and routine modifications', () => {
   assert.equal(r1.ex[0].id, '0001');
   assert.equal(r1.ex[0].sets, 5);
 });
+
+/* =============================== Coach cardio toggle & validation (Issue #77) =============================== */
+
+const VALID_ROUTINES = [
+  { id: 'r1', name: 'Upper Body', ex: [{ id: '0001', sets: 3, reps: 10 }] },
+  { id: 'r2', name: 'Lower Body', ex: [{ id: '0007', sets: 3, reps: 10 }] }
+];
+
+test('validatePlan rejects week cardio item when includeCardio is false or omitted (Issue #77)', () => {
+  // Omitted includeCardio
+  const res1 = validatePlan({
+    routines: VALID_ROUTINES,
+    week: { 1: 'r1', 3: { kind: 'cardio', type: 'run', duration: 30 } }
+  });
+  assert.equal(res1.ok, false);
+  assert.ok(res1.errors.some(e => e.includes('Cardio sessions are disabled in coach profile')));
+
+  // Explicit includeCardio: false
+  const res2 = validatePlan(
+    {
+      routines: VALID_ROUTINES,
+      week: { 1: 'r1', 3: { kind: 'cardio', type: 'run', duration: 30 } }
+    },
+    { coachProfile: { includeCardio: false } }
+  );
+  assert.equal(res2.ok, false);
+  assert.ok(res2.errors.some(e => e.includes('Cardio sessions are disabled in coach profile')));
+});
+
+test('validatePlan accepts valid cardio session in week when includeCardio is true (Issue #77)', () => {
+  const res = validatePlan(
+    {
+      name: 'Hybrid Strength & Run',
+      routines: VALID_ROUTINES,
+      week: {
+        1: 'r1',
+        3: 'r2',
+        5: { kind: 'cardio', type: 'run', duration: 35, distance: 5000, notes: 'Easy recovery run' }
+      }
+    },
+    {
+      coachProfile: {
+        includeCardio: true,
+        daysPerWeek: 2,
+        cardioSessionsPerWeek: 1,
+        cardioTypes: ['run', 'ride']
+      }
+    }
+  );
+  assert.equal(res.ok, true, `Validation failed: ${JSON.stringify(res.errors)}`);
+  assert.equal(res.bundle.week[5].kind, 'cardio');
+  assert.equal(res.bundle.week[5].type, 'run');
+  assert.equal(res.bundle.week[5].duration, 35);
+  assert.equal(res.bundle.week[5].distance, 5000);
+});
+
+test('validatePlan validates allowed cardioTypes vs standard types (Issue #77)', () => {
+  // Disallowed type when standard types default
+  const res1 = validatePlan(
+    {
+      routines: VALID_ROUTINES,
+      week: { 1: 'r1', 3: { kind: 'cardio', type: 'snowboard', duration: 60 } }
+    },
+    { includeCardio: true }
+  );
+  assert.equal(res1.ok, false);
+  assert.ok(res1.errors.some(e => e.includes('snowboard') && e.includes('not an allowed cardio type')));
+
+  // Allowed custom cardioTypes
+  const res2 = validatePlan(
+    {
+      routines: VALID_ROUTINES,
+      week: { 1: 'r1', 3: { kind: 'cardio', type: 'swim', duration: 45 } }
+    },
+    {
+      coachProfile: {
+        includeCardio: true,
+        cardioTypes: ['swim', 'row']
+      }
+    }
+  );
+  assert.equal(res2.ok, true);
+  assert.equal(res2.bundle.week[3].type, 'swim');
+
+  // Disallowed type when custom cardioTypes restricts it
+  const res3 = validatePlan(
+    {
+      routines: VALID_ROUTINES,
+      week: { 1: 'r1', 3: { kind: 'cardio', type: 'ride', duration: 45 } }
+    },
+    {
+      coachProfile: {
+        includeCardio: true,
+        cardioTypes: ['swim', 'row']
+      }
+    }
+  );
+  assert.equal(res3.ok, false);
+  assert.ok(res3.errors.some(e => e.includes('ride') && e.includes('not an allowed cardio type')));
+});
+
+test('validatePlan rejects cardio session missing positive duration or distance (Issue #77)', () => {
+  const res1 = validatePlan(
+    {
+      routines: VALID_ROUTINES,
+      week: { 1: 'r1', 3: { kind: 'cardio', type: 'run', duration: 0 } }
+    },
+    { includeCardio: true }
+  );
+  assert.equal(res1.ok, false);
+  assert.ok(res1.errors.some(e => e.includes('duration must be a positive number')));
+
+  const res2 = validatePlan(
+    {
+      routines: VALID_ROUTINES,
+      week: { 1: 'r1', 3: { kind: 'cardio', type: 'run', distance: -10 } }
+    },
+    { includeCardio: true }
+  );
+  assert.equal(res2.ok, false);
+  assert.ok(res2.errors.some(e => e.includes('distance must be a positive number')));
+
+  const res3 = validatePlan(
+    {
+      routines: VALID_ROUTINES,
+      week: { 1: 'r1', 3: { kind: 'cardio', type: 'run' } }
+    },
+    { includeCardio: true }
+  );
+  assert.equal(res3.ok, false);
+  assert.ok(res3.errors.some(e => e.includes('must specify a positive duration or distance')));
+});
+
+test('validatePlan validates interval steps in cardio session (Issue #77)', () => {
+  // Valid steps
+  const valid = validatePlan(
+    {
+      routines: VALID_ROUTINES,
+      week: {
+        1: 'r1',
+        3: {
+          kind: 'cardio',
+          type: 'run',
+          steps: [
+            { kind: 'warmup', durSec: 300 },
+            { kind: 'work', distM: 1000 },
+            { kind: 'recover', durSec: 60 },
+            { kind: 'cooldown', durSec: 300 }
+          ]
+        }
+      }
+    },
+    { includeCardio: true }
+  );
+  assert.equal(valid.ok, true, `Should validate interval steps: ${JSON.stringify(valid.errors)}`);
+  assert.equal(valid.bundle.week[3].steps.length, 4);
+  assert.equal(valid.bundle.week[3].steps[0].kind, 'warmup');
+
+  // Invalid step kind
+  const badKind = validatePlan(
+    {
+      routines: VALID_ROUTINES,
+      week: {
+        1: 'r1',
+        3: {
+          kind: 'cardio',
+          type: 'run',
+          steps: [{ kind: 'sprint', durSec: 60 }]
+        }
+      }
+    },
+    { includeCardio: true }
+  );
+  assert.equal(badKind.ok, false);
+  assert.ok(badKind.errors.some(e => e.includes('kind must be one of')));
+
+  // Missing positive durSec/distM
+  const badDur = validatePlan(
+    {
+      routines: VALID_ROUTINES,
+      week: {
+        1: 'r1',
+        3: {
+          kind: 'cardio',
+          type: 'run',
+          steps: [{ kind: 'work', durSec: 0 }]
+        }
+      }
+    },
+    { includeCardio: true }
+  );
+  assert.equal(badDur.ok, false);
+  assert.ok(badDur.errors.some(e => e.includes('durSec must be a positive number')));
+});
+
+test('validatePlan enforces cardioSessionsPerWeek and daysPerWeek separation (Issue #77)', () => {
+  // Exceeds cardioSessionsPerWeek
+  const exceedCardio = validatePlan(
+    {
+      routines: VALID_ROUTINES,
+      week: {
+        1: 'r1',
+        2: { kind: 'cardio', type: 'run', duration: 30 },
+        4: { kind: 'cardio', type: 'ride', duration: 45 }
+      }
+    },
+    {
+      coachProfile: {
+        includeCardio: true,
+        daysPerWeek: 1,
+        cardioSessionsPerWeek: 1
+      }
+    }
+  );
+  assert.equal(exceedCardio.ok, false);
+  assert.ok(exceedCardio.errors.some(e => e.includes('2 cardio sessions which exceeds cardioSessionsPerWeek of 1')));
+
+  // Cardio count does not count as gym days
+  const gymMismatch = validatePlan(
+    {
+      routines: VALID_ROUTINES,
+      week: {
+        1: 'r1',
+        3: { kind: 'cardio', type: 'run', duration: 30 }
+      }
+    },
+    {
+      coachProfile: {
+        includeCardio: true,
+        daysPerWeek: 2,
+        cardioSessionsPerWeek: 1
+      }
+    }
+  );
+  assert.equal(gymMismatch.ok, false);
+  assert.ok(gymMismatch.errors.some(e => e.includes('1 days but 2 were asked for')));
+});
+
+test('validateReview rejects week cardio change when includeCardio is false or omitted (Issue #77)', () => {
+  const proposal = makeReview([
+    {
+      id: 'c1',
+      type: 'week',
+      target: { weekday: 4 },
+      why: 'Add tempo run session',
+      after: { kind: 'cardio', type: 'run', duration: 40 }
+    }
+  ]);
+
+  // Omitted includeCardio
+  const res1 = validateReview(proposal, BASE_PLAN);
+  assert.equal(res1.ok, false);
+  assert.ok(res1.errors.some(e => e.includes('Cardio sessions are disabled in coach profile')));
+
+  // Explicit includeCardio: false
+  const res2 = validateReview(proposal, BASE_PLAN, { coachProfile: { includeCardio: false } });
+  assert.equal(res2.ok, false);
+  assert.ok(res2.errors.some(e => e.includes('Cardio sessions are disabled in coach profile')));
+});
+
+test('validateReview accepts cardio week change and enforces cardioSessionsPerWeek (Issue #77)', () => {
+  const proposal = makeReview([
+    {
+      id: 'c1',
+      type: 'week',
+      target: { weekday: 4 },
+      why: 'Add aerobic base training',
+      after: {
+        kind: 'cardio',
+        type: 'ride',
+        duration: 45,
+        steps: [
+          { kind: 'warmup', durSec: 300 },
+          { kind: 'work', durSec: 2100 },
+          { kind: 'cooldown', durSec: 300 }
+        ]
+      }
+    }
+  ]);
+
+  // Valid when within cardioSessionsPerWeek
+  const res1 = validateReview(proposal, BASE_PLAN, {
+    coachProfile: {
+      includeCardio: true,
+      cardioSessionsPerWeek: 1
+    }
+  });
+  assert.equal(res1.ok, true, `Should validate: ${JSON.stringify(res1.errors)}`);
+  assert.equal(res1.proposal.changes[0].after.kind, 'cardio');
+  assert.equal(res1.proposal.changes[0].after.type, 'ride');
+  assert.equal(res1.proposal.changes[0].after.steps.length, 3);
+
+  // Rejects when total cardio sessions exceed cardioSessionsPerWeek
+  const exceedProposal = makeReview([
+    {
+      id: 'c1',
+      type: 'week',
+      target: { weekday: 4 },
+      why: 'Add first run',
+      after: { kind: 'cardio', type: 'run', duration: 30 }
+    },
+    {
+      id: 'c2',
+      type: 'week',
+      target: { weekday: 6 },
+      why: 'Add second run',
+      after: { kind: 'cardio', type: 'run', duration: 30 }
+    }
+  ]);
+  const res2 = validateReview(exceedProposal, BASE_PLAN, {
+    coachProfile: {
+      includeCardio: true,
+      cardioSessionsPerWeek: 1
+    }
+  });
+  assert.equal(res2.ok, false);
+  assert.ok(res2.errors.some(e => e.includes('2 cardio sessions which exceeds cardioSessionsPerWeek of 1')));
+});

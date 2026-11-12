@@ -11,6 +11,9 @@ Change something when the data says so:
 - Sessions running well over `coachProfile.sessionMin` — cut volume or superset.
 - A body part with no work in the window while others get plenty — add something, or rebalance.
 - Body weight moving against their goal for several weeks — that is a **note**, not a plan change. Say it plainly and leave the plan alone.
+- **Cardio sessions in week (`coachProfile.includeCardio`)**:
+  - When `coachProfile.includeCardio` is `false` (or omitted): do NOT propose changes adding or scheduling standalone cardio sessions (`kind: "cardio"`). Cardio sessions are disabled in coach profile.
+  - When `coachProfile.includeCardio` is `true`: you may propose `week` changes scheduling standalone cardio items (`kind: "cardio"`, `type` from `coachProfile.cardioTypes` or run, ride, walk, hike, with positive duration or distance, and optional interval `steps`). Total cardio sessions across the week must not exceed `coachProfile.cardioSessionsPerWeek`.
 
 **Change nothing when nothing warrants it.** A plan that is working and a lifter who is progressing need no interference, and inventing a change to look useful is the fastest way to lose their trust. In that case answer:
 
@@ -61,6 +64,6 @@ Prefer few, high-conviction changes over many small ones. Never propose more tha
 | `add-routine` | — | `{ name, emoji?, prog?, ex: [...] }` |
 | `remove-routine` | `routineId` | `null` |
 | `rename-routine` | `routineId` | new name |
-| `week` | `weekday` | routine id, `"rest"`, or `null` |
+| `week` | `weekday` | routine id, `"rest"`, `null`, or cardio session `{ kind: "cardio", type, duration?|distance?, steps? }` (only when `includeCardio` is true) |
 
 `weight` may only appear on an exercise you are **adding** or **swapping in** — never for something they already train. Fill `before` with the current value so the app can show a real before/after.
