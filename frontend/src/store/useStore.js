@@ -4,7 +4,11 @@ import { localTZ, uid } from '../lib/format.js'
 import { registerCustom } from '../lib/exercises.js'
 import { DEMO, DEMO_SEEDED } from '../lib/demo.js'
 import { MOBILE, nativeLoad, nativeSave, syncReminder } from '../lib/mobile.js'
-import { createLocalBackup } from '../lib/backup.js'
+import {
+  createLocalBackup,
+  exportBackup as libExportBackup,
+  importBackup as libImportBackup
+} from '../lib/backup.js'
 import { openConflictDialog, openRegisterImportDialog } from '../components/ConflictDialog.jsx'
 import { getServerUrl, clearServerConfig } from '../lib/server-config.js'
 import { clearToken } from '../lib/token-storage.js'
@@ -287,7 +291,29 @@ export const useStore = create((set, get) => {
       mut(S)
       persist(S, push)
     },
-    replaceState(S, push = false) { persist(clone(S), push) },
+    replaceState(S, push = false) {
+      let stateToPersist = S
+      if (S && S.state && (S.tracks || S.routeFiles || S.version)) {
+        stateToPersist = S.state
+      }
+      persist(clone(stateToPersist), push)
+      if (S && (S.tracks || S.routeFiles)) {
+        const adapter = getCardioAdapter()
+        if (S.tracks) {
+          for (const [key, track] of Object.entries(S.tracks)) {
+            if (track) adapter.writeTrack(key, track).catch(() => {})
+          }
+        }
+        if (S.routeFiles) {
+          for (const [key, route] of Object.entries(S.routeFiles)) {
+            if (route) adapter.writeTrack(key, route).catch(() => {})
+          }
+        }
+        if (get().isServerMode?.() || get().user) {
+          reconcileTracksAndRoutes({ store: useStore }).catch(() => {})
+        }
+      }
+    },
 
     // Session array accessors and mutators (Issue #47)
     getDayPlan(date) {
@@ -475,6 +501,12 @@ export const useStore = create((set, get) => {
     },
     lazyFetchRoute(id, options) {
       return lazyFetchRoute(id, { store: useStore, ...options })
+    },
+    async exportBackup(options = {}) {
+      return libExportBackup(get().S, { store: useStore, ...options })
+    },
+    async importBackup(backupData, options = {}) {
+      return libImportBackup(backupData, { store: useStore, ...options })
     },
 
     isServerMode: () => Boolean(get().user && (!MOBILE || getServerUrl())),
@@ -767,6 +799,8 @@ export const deleteRoute = (id) => useStore.getState().deleteRoute(id)
 export const reconcileTracks = (options) => useStore.getState().reconcileTracks(options)
 export const lazyFetchTrackStore = (id, options) => useStore.getState().lazyFetchTrack(id, options)
 export const lazyFetchRouteStore = (id, options) => useStore.getState().lazyFetchRoute(id, options)
+export const exportBackup = (options) => useStore.getState().exportBackup(options)
+export const importBackup = (backupData, options) => useStore.getState().importBackup(backupData, options)
 setGearStore(useStore)
 export const addGear = (gear) => useStore.getState().addGear(gear)
 export const updateGear = (id, patch) => useStore.getState().updateGear(id, patch)
