@@ -6,13 +6,11 @@ import { t } from '../lib/i18n.js'
 import { fmtDate } from '../lib/format.js'
 import { exLine } from '../lib/history.js'
 import { loadOfRoutine } from '../lib/muscles.js'
-import { DEMO } from '../lib/demo.js'
-import { MOBILE } from '../lib/mobile.js'
 import {
   markStale, applicable, applyChangeSet, applyCreatedPlan, recordDismissal,
-  changeTitle, changeValues, exName, coachAvailable
+  changeTitle, changeValues, exName
 } from '../lib/coach.js'
-import { useCoachStatus, resolvePending, refinePlan } from '../lib/coach-api.js'
+import { useCoachAvailable, useCoachStatus, resolvePending, refinePlan } from '../lib/coach-api.js'
 import { confirmSheet } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
 import BodyMap from '../components/BodyMap.jsx'
@@ -33,10 +31,11 @@ export default function CoachProposal() {
   const update = useStore(s => s.update)
   const toast = useUI(s => s.toast)
   const { pending, loading, refresh } = useCoachStatus(true)
+  const available = useCoachAvailable()
 
-  useEffect(() => { if (!coachAvailable(config, user, { demo: DEMO, mobile: MOBILE })) nav('/home', { replace: true }) }, [config, user])
-  useEffect(() => { if (!loading && !pending) nav('/coach', { replace: true }) }, [loading, pending])
-  if (!pending) return null
+  useEffect(() => { if (available === false) nav('/home', { replace: true }) }, [available, nav])
+  useEffect(() => { if (!loading && !pending) nav('/coach', { replace: true }) }, [loading, pending, nav])
+  if (!available || !pending) return null
 
   return pending.kind === 'create'
     ? <CreatedPlan p={pending} S={S} update={update} toast={toast} nav={nav} refresh={refresh} />

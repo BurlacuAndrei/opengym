@@ -10,13 +10,33 @@ import {
   validateReview,
   cleanPlan,
   planHash,
-  resolveProviderConfig
+  resolveProviderConfig,
+  DATA_CATEGORIES
 } from 'shared/coach/index.js'
 
 export { getByokKey, setByokKey, clearByokKey }
 
 let byokJob = null
 let byokPending = null
+const statusListeners = new Set()
+
+export function notifyByokStatus() {
+  const status = getByokStatus()
+  for (const listener of statusListeners) {
+    try {
+      listener(status)
+    } catch {}
+  }
+}
+
+export function subscribeByokStatus(listener) {
+  if (typeof listener === 'function') {
+    statusListeners.add(listener)
+  }
+  return () => {
+    statusListeners.delete(listener)
+  }
+}
 
 export function isServerCoachActive(config, user) {
   return Boolean(config?.coach?.enabled && user)
@@ -52,30 +72,51 @@ export function getByokStatus() {
   return { job: byokJob, pending: byokPending, cap: { used: 0, limit: 0 } }
 }
 
+export async function byokDisclosure(opts = {}) {
+  let key = opts.apiKey
+  if (!key) {
+    try { key = await getByokKey() } catch {}
+  }
+  const provider = (typeof key === 'string' && key.startsWith('sk-ant-')) ? 'anthropic' : (opts.provider || 'openai')
+  const providerLabel = provider === 'anthropic' ? 'Anthropic Claude' : 'OpenAI'
+  return {
+    provider,
+    providerLabel,
+    categories: DATA_CATEGORIES,
+    version: 1
+  }
+}
+
 export function setByokPending(pending) {
   byokPending = pending
+  notifyByokStatus()
 }
 
 export function clearByokPending() {
   byokPending = null
+  notifyByokStatus()
 }
 
 export function resolveByokPending() {
   byokPending = null
+  notifyByokStatus()
   return { ok: true }
 }
 
 export function setByokJob(job) {
   byokJob = job
+  notifyByokStatus()
 }
 
 export function clearByokJob() {
   byokJob = null
+  notifyByokStatus()
 }
 
 export function resetByokState() {
   byokJob = null
   byokPending = null
+  notifyByokStatus()
 }
 
 export async function executeByokCoach({
@@ -85,6 +126,7 @@ export async function executeByokCoach({
   note = '',
   intake = null,
   refine = '',
+  iteration: iterationParam,
   apiKey,
   providerConfig = {},
   fetchFn = globalThis.fetch,
@@ -213,13 +255,15 @@ export async function executeByokCoach({
     }
   } else {
     const bundle = runnerRes.data?.bundle || runnerRes.data
+    const prevIteration = byokPending?.iteration || 1
+    const iteration = iterationParam ?? (refine ? prevIteration + 1 : 1)
     pending = {
       id: `byok-plan-${Date.now()}`,
       kind: 'create',
       createdAt: Date.now(),
       expiresAt: Date.now() + 864e5,
       planHash: planHash(S),
-      iteration: 1,
+      iteration,
       summary: bundle.summary || '',
       bundle
     }
@@ -237,30 +281,37 @@ export async function runByokReview(opts = {}) {
   const S = opts.S || opts
   const note = opts.note || ''
   byokJob = { id: `byok-job-${Date.now()}`, kind: 'review', state: 'running', startedAt: Date.now() }
+  notifyByokStatus()
   try {
     const res = await executeByokCoach({ ...opts, kind: 'review', S, note })
     if (!res.ok) {
       throw new Error(res.error || 'Failed to review training')
     }
     byokPending = res.pending
+    notifyByokStatus()
     return res
   } finally {
     byokJob = null
+    notifyByokStatus()
   }
 }
 
 export async function runByokPlan(opts = {}) {
   const S = opts.S || opts
   const intake = opts.intake
+  const refine = opts.refine
   byokJob = { id: `byok-job-${Date.now()}`, kind: 'create', state: 'running', startedAt: Date.now() }
+  notifyByokStatus()
   try {
-    const res = await executeByokCoach({ ...opts, kind: 'create', S, intake })
+    const res = await executeByokCoach({ ...opts, kind: 'create', S, intake, refine })
     if (!res.ok) {
       throw new Error(res.error || 'Failed to build plan')
     }
     byokPending = res.pending
+    notifyByokStatus()
     return res
   } finally {
     byokJob = null
+    notifyByokStatus()
   }
 }

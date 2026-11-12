@@ -1,14 +1,12 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
 import { t } from '../lib/i18n.js'
 import { DAYN } from '../lib/format.js'
 import { EXDB } from '../lib/exercises.js'
-import { emptyCoach, coachAvailable } from '../lib/coach.js'
-import { requestPlan } from '../lib/coach-api.js'
-import { DEMO } from '../lib/demo.js'
-import { MOBILE } from '../lib/mobile.js'
+import { emptyCoach } from '../lib/coach.js'
+import { useCoachAvailable, requestPlan } from '../lib/coach-api.js'
 import Icon from '../components/Icon.jsx'
 import { Button, TextArea, Segmented } from '../components/ui.jsx'
 
@@ -58,7 +56,11 @@ export default function CoachIntake() {
   }))
   const set = patch => setP(v => ({ ...v, ...patch }))
 
-  if (!coachAvailable(config, user, { demo: DEMO, mobile: MOBILE })) { nav('/home', { replace: true }); return null }
+  const available = useCoachAvailable()
+  useEffect(() => {
+    if (available === false) nav('/home', { replace: true })
+  }, [available, nav])
+  if (!available) return null
 
   const key = STEPS[step]
   const canNext = key !== 'goal' || (p.goal && p.experience)
