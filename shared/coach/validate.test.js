@@ -563,3 +563,186 @@ test('validateReview accepts cardio week change and enforces cardioSessionsPerWe
   assert.equal(res2.ok, false);
   assert.ok(res2.errors.some(e => e.includes('2 cardio sessions which exceeds cardioSessionsPerWeek of 1')));
 });
+
+test('validatePlan rejects routines or week items when kind is disabled in profile.modalities (Issue #81)', () => {
+  // HIIT disabled in modalities
+  const res1 = validatePlan(
+    {
+      routines: [
+        { id: 'r_hiit', name: 'Tabata Burn', kind: 'hiit', ex: [{ id: '0001', sets: 4, reps: 15 }] }
+      ],
+      week: { 1: 'r_hiit' }
+    },
+    {
+      coachProfile: {
+        modalities: { gym: true, cardio: true, hiit: false, yoga: true, mobility: true }
+      }
+    }
+  );
+  assert.equal(res1.ok, false);
+  assert.ok(res1.errors.some(e => e.includes('Hiit routines are disabled in coach profile')));
+  assert.ok(res1.errors.some(e => e.includes('Hiit sessions are disabled in coach profile')));
+
+  // Gym disabled in modalities -> legacy routine (defaults to gym) rejected
+  const res2 = validatePlan(
+    {
+      routines: [
+        { id: 'r1', name: 'Strength A', ex: [{ id: '0001', sets: 3, reps: 10 }] }
+      ],
+      week: { 1: 'r1' }
+    },
+    {
+      coachProfile: {
+        modalities: { gym: false, cardio: true, hiit: true, yoga: true, mobility: true }
+      }
+    }
+  );
+  assert.equal(res2.ok, false);
+  assert.ok(res2.errors.some(e => e.includes('Gym routines are disabled in coach profile')));
+  assert.ok(res2.errors.some(e => e.includes('Gym sessions are disabled in coach profile')));
+});
+
+test('validatePlan accepts hiit, yoga, mobility with custom restSec and customEx when enabled (Issue #81)', () => {
+  const res = validatePlan(
+    {
+      name: 'Hybrid Flow & Strength',
+      summary: 'Integrated strength, flow, and conditioning.',
+      routines: [
+        {
+          id: 'r_gym',
+          name: 'Main Lifts',
+          kind: 'gym',
+          restSec: 120,
+          ex: [{ id: '0001', sets: 3, reps: 8 }]
+        },
+        {
+          id: 'r_hiit',
+          name: 'Sprint Intervals',
+          kind: 'hiit',
+          restSec: 30,
+          ex: [{ id: 'cx_hiit', sets: 4, reps: 15 }]
+        },
+        {
+          id: 'r_yoga',
+          name: 'Evening Stretch',
+          kind: 'yoga',
+          restSec: 0,
+          ex: [{ id: '0007', sets: 3, mode: 'time', sec: 45 }]
+        }
+      ],
+      customEx: [
+        { id: 'cx_hiit', n: 'Kettlebell Burpee', bp: 'full body', desc: 'Explosive kettlebell burpee cleanly executed' }
+      ],
+      week: {
+        1: 'r_gym',
+        3: 'r_hiit',
+        5: 'r_yoga'
+      }
+    },
+    {
+      coachProfile: {
+        modalities: { gym: true, cardio: false, hiit: true, yoga: true, mobility: false },
+        sessionsPerWeek: { gym: 1, hiit: 1, yoga: 1 }
+      }
+    }
+  );
+
+  assert.equal(res.ok, true, `Validation failed: ${JSON.stringify(res.errors)}`);
+  assert.equal(res.bundle.routines.length, 3);
+  assert.equal(res.bundle.routines[0].kind, 'gym');
+  assert.equal(res.bundle.routines[0].restSec, 120);
+  assert.equal(res.bundle.routines[1].kind, 'hiit');
+  assert.equal(res.bundle.routines[1].restSec, 30);
+  assert.equal(res.bundle.routines[2].kind, 'yoga');
+  assert.equal(res.bundle.routines[2].restSec, 0);
+  assert.equal(res.bundle.customEx[0].desc, 'Explosive kettlebell burpee cleanly executed');
+});
+
+test('validatePlan enforces session counts matching target sessionsPerWeek for enabled modalities (Issue #81)', () => {
+  const planData = {
+    routines: [
+      { id: 'r_gym', name: 'Gym', kind: 'gym', ex: [{ id: '0001', sets: 3, reps: 8 }] },
+      { id: 'r_hiit', name: 'HIIT', kind: 'hiit', ex: [{ id: '0001', sets: 3, reps: 10 }] }
+    ],
+    week: {
+      1: 'r_gym',
+      3: 'r_gym',
+      5: 'r_hiit'
+    }
+  };
+
+  // Mismatch on HIIT target (asked for 2, provided 1)
+  const resBad = validatePlan(planData, {
+    coachProfile: {
+      modalities: { gym: true, cardio: false, hiit: true, yoga: false, mobility: false },
+      sessionsPerWeek: { gym: 2, hiit: 2 }
+    }
+  });
+  assert.equal(resBad.ok, false);
+  assert.ok(resBad.errors.some(e => e.includes('1 hiit sessions but 2 were asked for')));
+
+  // Match
+  const resGood = validatePlan(planData, {
+    coachProfile: {
+      modalities: { gym: true, cardio: false, hiit: true, yoga: false, mobility: false },
+      sessionsPerWeek: { gym: 2, hiit: 1 }
+    }
+  });
+  assert.equal(resGood.ok, true, `Validation failed: ${JSON.stringify(resGood.errors)}`);
+});
+
+test('validateReview enforces modalities in add-routine and week changes, and applies cleanly with mergePlan (Issue #81)', () => {
+  // Reject add-routine for disabled mobility modality
+  const rejectAdd = makeReview([
+    {
+      id: 'c1',
+      type: 'add-routine',
+      why: 'Introduce hip mobility drills',
+      after: {
+        id: 'r_mob',
+        name: 'Hip Flow',
+        kind: 'mobility',
+        restSec: 15,
+        ex: [{ id: '0007', sets: 3, reps: 10 }]
+      }
+    }
+  ]);
+  const resReject = validateReview(rejectAdd, BASE_PLAN, {
+    coachProfile: {
+      modalities: { gym: true, cardio: false, hiit: false, yoga: false, mobility: false }
+    }
+  });
+  assert.equal(resReject.ok, false);
+  assert.ok(resReject.errors.some(e => e.includes('Mobility routines are disabled in coach profile')));
+
+  // Accept add-routine when mobility enabled, preserving kind & restSec in mergePlan
+  const acceptAdd = makeReview([
+    {
+      id: 'c1',
+      type: 'add-routine',
+      why: 'Introduce hip mobility drills',
+      after: {
+        id: 'r_mob',
+        name: 'Hip Flow',
+        kind: 'mobility',
+        restSec: 15,
+        ex: [{ id: '0007', sets: 3, reps: 10 }]
+      }
+    }
+  ]);
+  const resAccept = validateReview(acceptAdd, BASE_PLAN, {
+    coachProfile: {
+      modalities: { gym: true, cardio: false, hiit: false, yoga: false, mobility: true }
+    }
+  });
+  assert.equal(resAccept.ok, true, `Should accept: ${JSON.stringify(resAccept.errors)}`);
+  assert.equal(resAccept.proposal.changes[0].after.kind, 'mobility');
+  assert.equal(resAccept.proposal.changes[0].after.restSec, 15);
+
+  // Apply proposal via mergePlan
+  const merged = mergePlan(structuredClone(BASE_PLAN), resAccept.proposal);
+  const mobRoutine = merged.routines.find(r => r.name === 'Hip Flow');
+  assert.ok(mobRoutine, 'routine added');
+  assert.equal(mobRoutine.kind, 'mobility');
+  assert.equal(mobRoutine.restSec, 15);
+});

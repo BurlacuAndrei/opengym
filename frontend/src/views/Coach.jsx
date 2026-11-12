@@ -8,7 +8,7 @@ import { DEMO } from '../lib/demo.js'
 import { MOBILE } from '../lib/mobile.js'
 import {
   coachAvailable, hasConsent, CONSENT_VERSION, emptyCoach,
-  canRevert, revertLast, changeTitle, recordDismissal
+  canRevert, revertLast, changeTitle, changeValues, recordDismissal
 } from '../lib/coach.js'
 import {
   isByokActive, getByokKey, getByokStatus, runByokReview, clearByokPending
@@ -25,6 +25,7 @@ import { Section, Row, Button, TextArea, Switch, SelectRow } from '../components
    should not scatter its controls, least of all the ones that stop it. */
 
 const GOALS = ['strength', 'muscle', 'general fitness', 'fat loss', 'endurance']
+const MODALITIES = ['gym', 'cardio', 'hiit', 'yoga', 'mobility']
 
 // Rendered from the same list the server builds payloads from (GET /api/coach/disclosure),
 // so the promise on screen cannot drift from what actually leaves the box.
@@ -166,6 +167,51 @@ export default function Coach() {
             accessory="chevron" onClick={() => nav('/coach/intake?edit=1')} />
         </Section>
 
+        <Section title={t('Modalities')} footer={t('Enable disciplines and set target sessions per week.')}>
+          {MODALITIES.map(mod => {
+            const mods = coach.profile?.modalities
+            const isEnabled = mods ? Boolean(mods[mod]) : (mod === 'gym' || (mod === 'cardio' && Boolean(coach.profile?.includeCardio)))
+            const target = coach.profile?.sessionsPerWeek?.[mod] ?? (mod === 'gym' ? (coach.profile?.daysPerWeek || 3) : (mod === 'cardio' ? (coach.profile?.cardioSessionsPerWeek || 2) : 2))
+            const iconName = mod === 'gym' ? 'dumbbell' : mod === 'cardio' ? 'heart' : mod === 'hiit' ? 'flame' : mod === 'yoga' ? 'sparkles' : 'stretch'
+            return (
+              <Row key={mod} icon={iconName} title={t(mod.charAt(0).toUpperCase() + mod.slice(1))}
+                subtitle={isEnabled ? t('{0} sessions / week', target) : t('Disabled')}>
+                <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+                  {isEnabled && (
+                    <input
+                      type="number"
+                      min={1}
+                      max={7}
+                      className="num"
+                      style={{ width: 44, height: 28, textAlign: 'center', fontSize: 13 }}
+                      value={target}
+                      aria-label={t('{0} sessions per week', mod)}
+                      onChange={e => {
+                        const val = parseInt(e.target.value, 10)
+                        if (val >= 1 && val <= 7) {
+                          update(s => {
+                            const c = (s.coach = s.coach || emptyCoach())
+                            const prof = (c.profile = c.profile || {})
+                            prof.sessionsPerWeek = { ...(prof.sessionsPerWeek || {}), [mod]: val }
+                            if (mod === 'gym') prof.daysPerWeek = val
+                            if (mod === 'cardio') prof.cardioSessionsPerWeek = val
+                          })
+                        }
+                      }}
+                    />
+                  )}
+                  <Switch checked={isEnabled} onChange={v => update(s => {
+                    const c = (s.coach = s.coach || emptyCoach())
+                    const prof = (c.profile = c.profile || {})
+                    prof.modalities = { ...(prof.modalities || {}), [mod]: v }
+                    if (mod === 'cardio') prof.includeCardio = v
+                  })} />
+                </div>
+              </Row>
+            )
+          })}
+        </Section>
+
         <LogCard coach={coach} />
 
         <Section title={t('Controls')}>
@@ -176,11 +222,18 @@ export default function Coach() {
   </div>
 }
 
-const summarise = p => [
-  p.goal && t(p.goal),
-  p.daysPerWeek && t('{0} days a week', p.daysPerWeek),
-  p.sessionMin && t('{0} min', p.sessionMin)
-].filter(Boolean).join(' · ')
+const summarise = p => {
+  const parts = [
+    p.goal && t(p.goal),
+    p.daysPerWeek && t('{0} days a week', p.daysPerWeek),
+    p.sessionMin && t('{0} min', p.sessionMin)
+  ]
+  if (p.modalities && typeof p.modalities === 'object') {
+    const active = Object.entries(p.modalities).filter(([_, v]) => Boolean(v)).map(([k]) => t(k))
+    if (active.length) parts.push(active.join(', '))
+  }
+  return parts.filter(Boolean).join(' · ')
+}
 
 /* ---------------------------------- consent ---------------------------------- */
 
@@ -250,20 +303,106 @@ function StatusCard({ job, pending, nav }) {
     </div>
   </div>
 
-  if (pending) return <div className="card" style={{ borderColor: 'var(--acc)' }}>
-    <div className="today-row" onClick={() => nav('/coach/proposal')}>
-      <div className="row" style={{ gap: 9, minWidth: 0 }}>
-        <span className="lrow-i" style={{ background: 'var(--acc)' }}><Icon name="clipboard" /></span>
-        <div style={{ minWidth: 0 }}>
-          <div className="lbl2">{pending.kind === 'create' ? t('Your plan is ready') : t('Suggestions ready')}</div>
-          <div className="ttl">{pending.kind === 'create'
-            ? t('{0} routines to look over', pending.bundle?.routines?.length || 0)
-            : t(pending.changes?.length === 1 ? '{0} suggestion' : '{0} suggestions', pending.changes?.length || 0)}</div>
+  if (pending) {
+    const isCreate = pending.kind === 'create'
+    const routines = pending.bundle?.routines || []
+    const customEx = pending.bundle?.customEx || []
+    const changes = pending.changes || []
+
+    return <div className="card" style={{ borderColor: 'var(--acc)' }} data-testid="coach-proposal-card">
+      <div className="today-row" onClick={() => nav('/coach/proposal')} style={{ cursor: 'pointer' }}>
+        <div className="row" style={{ gap: 9, minWidth: 0 }}>
+          <span className="lrow-i" style={{ background: 'var(--acc)' }}><Icon name="clipboard" /></span>
+          <div style={{ minWidth: 0 }}>
+            <div className="lbl2">{isCreate ? t('Your plan is ready') : t('Suggestions ready')}</div>
+            <div className="ttl">{isCreate
+              ? (pending.bundle?.name || t('{0} routines to look over', routines.length))
+              : t(changes.length === 1 ? '{0} suggestion' : '{0} suggestions', changes.length)}</div>
+          </div>
+        </div>
+        <span className="tag acc">{t('Review')}</span>
+      </div>
+
+      {/* Proposal Diff / Preview */}
+      <div className="proposal-diff" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--sep)' }}>
+        {isCreate && routines.length > 0 && <div className="sect-b" style={{ display: 'grid', gap: 8 }}>
+          <div className="small" style={{ fontWeight: 600, color: 'var(--text-1)' }}>{t('Proposed routines')}:</div>
+          {routines.map(r => (
+            <div key={r.id} className="row between" style={{ padding: '6px 8px', background: 'var(--surface-2)', borderRadius: 6, gap: 8 }}>
+              <div className="row" style={{ gap: 6, alignItems: 'center', minWidth: 0, flexWrap: 'wrap' }}>
+                <span>{r.emoji || '🏋️'}</span>
+                <span className="small" style={{ fontWeight: 600 }}>{r.name}</span>
+                <span className="tag acc routine-kind-badge" data-testid="routine-kind-badge" style={{ textTransform: 'uppercase', fontSize: '.7rem' }}>
+                  {r.kind || 'gym'}
+                </span>
+                {r.restSec != null && (
+                  <span className="tag routine-rest-sec" data-testid="routine-rest-sec" style={{ fontSize: '.7rem' }}>
+                    {r.restSec}s rest
+                  </span>
+                )}
+              </div>
+              <span className="dim small" style={{ whiteSpace: 'nowrap' }}>{t('{0} exercises', r.ex?.length || 0)}</span>
+            </div>
+          ))}
+        </div>}
+
+        {!isCreate && changes.length > 0 && <div className="sect-b" style={{ display: 'grid', gap: 8 }}>
+          <div className="small" style={{ fontWeight: 600, color: 'var(--text-1)' }}>{t('Suggested changes')}:</div>
+          {changes.map(c => {
+            const vals = changeValues ? changeValues(c) : null
+            return (
+              <div key={c.id} style={{ padding: '6px 8px', background: 'var(--surface-2)', borderRadius: 6 }}>
+                <div className="row between" style={{ gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span className="small" style={{ fontWeight: 600 }}>{changeTitle(c)}</span>
+                  {c.type === 'add-routine' && (
+                    <div className="row" style={{ gap: 4 }}>
+                      <span className="tag acc routine-kind-badge" data-testid="routine-kind-badge" style={{ textTransform: 'uppercase', fontSize: '.7rem' }}>
+                        {c.after?.kind || 'gym'}
+                      </span>
+                      {c.after?.restSec != null && (
+                        <span className="tag routine-rest-sec" data-testid="routine-rest-sec" style={{ fontSize: '.7rem' }}>
+                          {c.after.restSec}s rest
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {vals && <div className="row" style={{ gap: 6, marginTop: 4 }}>
+                  <span className="tag" style={{ fontSize: '.72rem' }}>{vals.before}</span>
+                  <Icon name="chevronRight" style={{ fontSize: 10, color: 'var(--label-3)' }} />
+                  <span className="tag acc" style={{ fontSize: '.72rem' }}>{vals.after}</span>
+                </div>}
+                {c.why && <div className="dim small" style={{ fontSize: '.72rem', marginTop: 3 }}>{c.why}</div>}
+              </div>
+            )
+          })}
+        </div>}
+
+        {customEx.length > 0 && <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--sep)' }}>
+          <div className="small" style={{ fontWeight: 600, color: 'var(--text-1)', marginBottom: 4 }}>{t('Custom exercises')}:</div>
+          {customEx.map((cx, i) => (
+            <div key={cx.id || i} style={{ padding: '4px 0' }} className="custom-ex-entry" data-testid="custom-ex-entry">
+              <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                <span className="small" style={{ fontWeight: 600 }}>{cx.n}</span>
+                {cx.bp && <span className="tag" style={{ fontSize: '.68rem' }}>{cx.bp}</span>}
+              </div>
+              {(cx.desc || cx.description) && (
+                <div className="dim small custom-ex-desc" data-testid="custom-ex-desc" style={{ fontSize: '.72rem', marginTop: 2, lineHeight: 1.4 }}>
+                  {cx.desc || cx.description}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>}
+
+        <div style={{ marginTop: 10, textAlign: 'right' }}>
+          <Button variant="primary" size="small" onClick={() => nav('/coach/proposal')}>
+            {t('Open full proposal')}
+          </Button>
         </div>
       </div>
-      <span className="tag acc">{t('Review')}</span>
     </div>
-  </div>
+  }
 
   return null
 }

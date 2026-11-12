@@ -378,3 +378,93 @@ test('validateReview enforces includeCardio and interval steps (Issue #77)', () 
   assert.equal(rEnabled.proposal.changes[0].after.kind, 'cardio');
   assert.equal(rEnabled.proposal.changes[0].after.type, 'walk');
 });
+
+test('validatePlan and validateReview enforce per-modality switches and proposal application (Issue #81)', async () => {
+  const { mergePlan } = await import('../../shared/coach/plan.js');
+
+  // 1. validatePlan rejects when modality is disabled
+  const planHiit = {
+    routines: [
+      { id: 'r1', name: 'Sprint Day', kind: 'hiit', restSec: 30, ex: [{ id: '0001', sets: 4, reps: 15 }] }
+    ],
+    week: { 1: 'r1' }
+  };
+  const resBadPlan = validatePlan(planHiit, {
+    coachProfile: { modalities: { gym: true, cardio: false, hiit: false, yoga: true, mobility: false } }
+  });
+  assert.equal(resBadPlan.ok, false);
+  assert.ok(resBadPlan.errors.some(e => e.includes('Hiit routines are disabled in coach profile')));
+
+  // 2. validatePlan accepts enabled hiit, yoga, mobility with restSec and customEx
+  const planMulti = {
+    name: 'Multi Modality Block',
+    summary: 'Gym, HIIT, and Yoga in one weekly plan.',
+    routines: [
+      { id: 'r1', name: 'Heavy Upper', kind: 'gym', restSec: 90, ex: [{ id: '0001', sets: 3, reps: 8 }] },
+      { id: 'r2', name: 'Tabata', kind: 'hiit', restSec: 20, ex: [{ id: 'cx_hiit', sets: 4, reps: 12 }] },
+      { id: 'r3', name: 'Recovery Yoga', kind: 'yoga', restSec: 0, ex: [{ id: '0007', sets: 2, sec: 60, mode: 'time' }] }
+    ],
+    customEx: [{ id: 'cx_hiit', n: 'Jump Tuck', bp: 'legs', desc: 'Explosive tuck jumps' }],
+    week: { 1: 'r1', 3: 'r2', 5: 'r3' }
+  };
+  const resGoodPlan = validatePlan(planMulti, {
+    coachProfile: {
+      modalities: { gym: true, cardio: false, hiit: true, yoga: true, mobility: false },
+      sessionsPerWeek: { gym: 1, hiit: 1, yoga: 1 }
+    }
+  });
+  assert.equal(resGoodPlan.ok, true, `Should validate: ${JSON.stringify(resGoodPlan.errors)}`);
+  assert.equal(resGoodPlan.bundle.routines[1].kind, 'hiit');
+  assert.equal(resGoodPlan.bundle.routines[1].restSec, 20);
+  assert.equal(resGoodPlan.bundle.routines[2].kind, 'yoga');
+  assert.equal(resGoodPlan.bundle.routines[2].restSec, 0);
+
+  // 3. Target sessionsPerWeek count mismatch
+  const resMismatch = validatePlan(planMulti, {
+    coachProfile: {
+      modalities: { gym: true, cardio: false, hiit: true, yoga: true, mobility: false },
+      sessionsPerWeek: { gym: 2, hiit: 1, yoga: 1 } // asked for 2 gym, got 1
+    }
+  });
+  assert.equal(resMismatch.ok, false);
+  assert.ok(resMismatch.errors.some(e => e.includes('1 days but 2 were asked for')));
+
+  // 4. validateReview rejects disabled modality in add-routine
+  const reviewAddHiit = {
+    coach_contract: 1,
+    summary: 'Add hiit routine',
+    changes: [
+      {
+        id: 'c1',
+        type: 'add-routine',
+        why: 'Conditioning booster',
+        after: {
+          id: 'r_hiit',
+          name: 'HIIT Circuit',
+          kind: 'hiit',
+          restSec: 25,
+          ex: [{ id: '0001', sets: 3, reps: 15 }]
+        }
+      }
+    ]
+  };
+  const resBadReview = validateReview(reviewAddHiit, PLAN, {
+    coachProfile: { modalities: { gym: true, cardio: false, hiit: false, yoga: true, mobility: false } }
+  });
+  assert.equal(resBadReview.ok, false);
+  assert.ok(resBadReview.errors.some(e => e.includes('Hiit routines are disabled in coach profile')));
+
+  // 5. validateReview accepts enabled modality and applies with mergePlan
+  const resGoodReview = validateReview(reviewAddHiit, PLAN, {
+    coachProfile: { modalities: { gym: true, cardio: false, hiit: true, yoga: true, mobility: false } }
+  });
+  assert.equal(resGoodReview.ok, true, `Should validate: ${JSON.stringify(resGoodReview.errors)}`);
+  assert.equal(resGoodReview.proposal.changes[0].after.kind, 'hiit');
+  assert.equal(resGoodReview.proposal.changes[0].after.restSec, 25);
+
+  const applied = mergePlan(structuredClone(PLAN), resGoodReview.proposal);
+  const added = applied.routines.find(r => r.name === 'HIIT Circuit');
+  assert.ok(added);
+  assert.equal(added.kind, 'hiit');
+  assert.equal(added.restSec, 25);
+});

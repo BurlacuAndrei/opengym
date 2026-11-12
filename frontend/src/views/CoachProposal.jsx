@@ -87,7 +87,11 @@ function CreatedPlan({ p, S, update, toast, nav, refresh }) {
 
     {b.routines.map(r => <div key={r.id} className="card">
       <div className="row between" style={{ marginBottom: 4 }}>
-        <h2 style={{ margin: 0 }}>{r.emoji} {r.name}</h2>
+        <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <h2 style={{ margin: 0 }}>{r.emoji} {r.name}</h2>
+          <span className="tag acc" data-testid="routine-kind-badge" style={{ textTransform: 'uppercase' }}>{r.kind || 'gym'}</span>
+          {r.restSec != null && <span className="tag" data-testid="routine-rest-sec">{r.restSec}s rest</span>}
+        </div>
         <span className="dim small">{t('{0} exercises', r.ex.length)}</span>
       </div>
       {!!r.why && <div className="dim small" style={{ marginBottom: 10, lineHeight: 1.5 }}>{r.why}</div>}
@@ -100,6 +104,17 @@ function CreatedPlan({ p, S, update, toast, nav, refresh }) {
       </div>)}
       <div style={{ marginTop: 10 }}><BodyMap load={loadOfRoutine(r)} body={S.body} /></div>
     </div>)}
+
+    {!!b.customEx?.length && <div className="card" data-testid="custom-ex-section">
+      <h3 style={{ margin: '0 0 8px' }}>{t('Custom exercises')}</h3>
+      {b.customEx.map((c, i) => <div key={c.id || i} style={{ padding: '6px 0', borderTop: i ? '1px solid var(--sep)' : 'none' }}>
+        <div className="row between">
+          <span style={{ fontWeight: 600 }}>{c.n}</span>
+          {c.bp && <span className="tag">{c.bp}</span>}
+        </div>
+        {(c.desc || c.description) && <div className="dim small" style={{ marginTop: 4, lineHeight: 1.45 }}>{c.desc || c.description}</div>}
+      </div>)}
+    </div>}
 
     <div className="card">
       <div className="row between">
@@ -181,8 +196,20 @@ function ChangeSet({ p, S, update, toast, nav }) {
       return <div key={c.id} className="card" style={stale ? { opacity: .55 } : null}>
         <div className="row between" style={{ gap: 10, alignItems: 'flex-start' }}>
           <div style={{ minWidth: 0, flex: 1 }}>
-            <div className="row" style={{ gap: 8, marginBottom: 3 }}>
+            <div className="row" style={{ gap: 8, marginBottom: 3, alignItems: 'center', flexWrap: 'wrap' }}>
               <span className="small capitalize" style={{ fontWeight: 600 }}>{changeTitle(c)}</span>
+              {c.type === 'add-routine' && (
+                <div className="row" style={{ gap: 4 }}>
+                  <span className="tag acc" data-testid="routine-kind-badge" style={{ textTransform: 'uppercase' }}>
+                    {c.after?.kind || 'gym'}
+                  </span>
+                  {c.after?.restSec != null && (
+                    <span className="tag" data-testid="routine-rest-sec">
+                      {c.after.restSec}s rest
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
             {vals && <div className="row" style={{ gap: 7, marginBottom: 5 }}>
               <span className="tag">{vals.before}</span>

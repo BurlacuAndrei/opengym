@@ -267,6 +267,8 @@ const CHANGE_APPLY = {
     const a = c.after
     s.routines.push({
       id: uid(), name: a.name, emoji: a.emoji || '🏋️',
+      ...(a.kind ? { kind: a.kind } : {}),
+      ...(a.restSec != null ? { restSec: a.restSec } : {}),
       ...(POLICIES.includes(a.prog) ? { prog: a.prog } : {}),
       ex: a.ex.map(e => ({
         id: e.id, sets: e.sets || 3, mode: e.mode || 'reps',

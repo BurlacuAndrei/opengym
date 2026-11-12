@@ -12,6 +12,11 @@ Design a complete plan from `coachProfile` (their intake answers) and, if presen
 - **Cardio sessions in plan (`coachProfile.includeCardio`)**:
   - When `coachProfile.includeCardio` is `false` (or omitted): do NOT include standalone cardio sessions in `week` (`kind: "cardio"`). Cardio sessions are disabled.
   - When `coachProfile.includeCardio` is `true`: you may schedule standalone cardio items in `week` with `kind: "cardio"`, `type` from `coachProfile.cardioTypes` (or standard types: run, ride, walk, hike), and positive duration or distance. Do not exceed `coachProfile.cardioSessionsPerWeek` (1–7). Gym training days must still match `coachProfile.daysPerWeek`. Optional interval `steps` may specify `kind` (warmup, work, recover, cooldown) with positive `durSec` or `distM`.
+- **Modality switches & target sessions (`coachProfile.modalities`)**:
+  - `coachProfile.modalities` is `{ gym: boolean, cardio: boolean, hiit: boolean, yoga: boolean, mobility: boolean }`.
+  - Only schedule routines or sessions for modalities that are enabled (`true`). Any routine or week item of a disabled modality will be rejected.
+  - When enabled, you can propose `hiit`, `yoga`, and `mobility` routines with `kind` (`gym`, `hiit`, `yoga`, `mobility`), custom per-routine `restSec` (seconds between exercises), library poses/drills, and `customEx` entries with `desc`.
+  - Enforce session counts matching target `sessionsPerWeek` (or `coachProfile.daysPerWeek` / `coachProfile.cardioSessionsPerWeek`) for each enabled modality.
 
 ## Output
 
@@ -28,6 +33,8 @@ Design a complete plan from `coachProfile` (their intake answers) and, if presen
       "id": "r1",
       "name": "<routine name>",
       "emoji": "<one emoji>",
+      "kind": "gym",
+      "restSec": 90,
       "prog": "linear",
       "why": "<1-2 sentences: what this day is for>",
       "ex": [

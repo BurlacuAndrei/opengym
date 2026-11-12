@@ -338,6 +338,8 @@ export function mergePlan(plan, review, { customEx = [] } = {}) {
             id: a.id || ('r' + (plan.routines.length + 1)),
             name: a.name || 'Routine',
             emoji: a.emoji || '🏋️',
+            ...(a.kind ? { kind: a.kind } : {}),
+            ...(a.restSec != null ? { restSec: a.restSec } : {}),
             ...(a.prog ? { prog: a.prog } : {}),
             ex: exList
           };

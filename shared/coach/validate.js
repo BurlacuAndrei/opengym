@@ -58,6 +58,55 @@ const clampStr = (v, n) => String(v == null ? '' : v).slice(0, n);
 
 export const STANDARD_CARDIO_TYPES = ['run', 'ride', 'walk', 'hike'];
 export const INTERVAL_STEP_KINDS = ['warmup', 'work', 'recover', 'cooldown'];
+export const ROUTINE_KINDS = ['gym', 'hiit', 'yoga', 'mobility'];
+export const ALL_MODALITIES = ['gym', 'cardio', 'hiit', 'yoga', 'mobility'];
+
+export function isModalityEnabled(modality, coachProfile, ctx = {}) {
+  const cp = coachProfile || {};
+  const mods = cp.modalities ?? cp.profile?.modalities ?? ctx.modalities;
+  if (mods) {
+    if (typeof mods === 'object' && !Array.isArray(mods)) {
+      if (mods[modality] !== undefined) {
+        return Boolean(mods[modality]?.enabled ?? mods[modality]);
+      }
+      return false;
+    } else if (Array.isArray(mods)) {
+      return mods.map(m => String(m).toLowerCase()).includes(modality);
+    }
+  }
+  if (modality === 'cardio') {
+    return Boolean(cp.includeCardio ?? cp.profile?.includeCardio ?? ctx.includeCardio);
+  }
+  return true;
+}
+
+export function getTargetSessions(modality, coachProfile, ctx = {}) {
+  if (!coachProfile && !ctx) return null;
+  const cp = coachProfile || {};
+  const spw = cp.sessionsPerWeek ?? ctx.sessionsPerWeek ?? cp.targetSessionsPerWeek ?? ctx.targetSessionsPerWeek;
+  if (spw && typeof spw === 'object' && spw[modality] != null) {
+    return spw[modality];
+  }
+  if (cp.modalities && typeof cp.modalities === 'object' && !Array.isArray(cp.modalities) && cp.modalities[modality]?.sessionsPerWeek != null) {
+    return cp.modalities[modality].sessionsPerWeek;
+  }
+  if (modality === 'gym') {
+    return cp.daysPerWeek ?? ctx.daysPerWeek ?? (typeof spw === 'number' ? spw : null);
+  }
+  if (modality === 'cardio') {
+    return cp.cardioSessionsPerWeek ?? ctx.cardioSessionsPerWeek;
+  }
+  if (modality === 'hiit') {
+    return cp.hiitSessionsPerWeek ?? ctx.hiitSessionsPerWeek;
+  }
+  if (modality === 'yoga') {
+    return cp.yogaSessionsPerWeek ?? ctx.yogaSessionsPerWeek;
+  }
+  if (modality === 'mobility') {
+    return cp.mobilitySessionsPerWeek ?? ctx.mobilitySessionsPerWeek;
+  }
+  return null;
+}
 
 function validateCardioSession(item, { allowedTypes, where, errors }) {
   if (!item || typeof item !== 'object') {
@@ -189,7 +238,7 @@ export function validatePlan(data, ctx = {}) {
   const customEx = (Array.isArray(data.customEx) ? data.customEx : [])
     .filter(c => c && isStr(c.id) && isStr(c.n))
     .slice(0, 20)
-    .map(c => ({ id: clampStr(c.id, 40), n: clampStr(c.n, 60), bp: clampStr(c.bp || 'waist', 30), ...(c.desc ? { desc: clampStr(c.desc, 400) } : {}) }));
+    .map(c => ({ id: clampStr(c.id, 40), n: clampStr(c.n, 60), bp: clampStr(c.bp || 'waist', 30), ...((c.desc || c.description) ? { desc: clampStr(c.desc || c.description, 400) } : {}) }));
   const proposedIds = new Set(customEx.map(c => c.id));
   const ctxCustomIds = new Set((ctx.customEx || []).map(c => (typeof c === 'string' ? c : c?.id)));
 
@@ -197,6 +246,13 @@ export function validatePlan(data, ctx = {}) {
   (Array.isArray(data.routines) ? data.routines : []).slice(0, MAX_ROUTINES).forEach((r, ri) => {
     if (!r || typeof r !== 'object') { errors.push(`routines[${ri}] is not an object`); return; }
     if (!isStr(r.name)) errors.push(`routines[${ri}].name is required`);
+    const rawKind = r.kind || r.type;
+    const routineKind = isStr(rawKind) ? rawKind.toLowerCase().trim() : 'gym';
+    if (!ROUTINE_KINDS.includes(routineKind)) {
+      errors.push(`routines[${ri}].kind "${rawKind}" is not one of: ${ROUTINE_KINDS.join(', ')}`);
+    } else if (!isModalityEnabled(routineKind, coachProfile, ctx)) {
+      errors.push(`${routineKind.charAt(0).toUpperCase() + routineKind.slice(1)} routines are disabled in coach profile`);
+    }
     if (r.prog != null && !POLICIES.includes(r.prog)) errors.push(`routines[${ri}].prog "${r.prog}" is not one of ${POLICIES.join(', ')}`);
     const ex = [];
     (Array.isArray(r.ex) ? r.ex : []).slice(0, MAX_EX_PER_ROUTINE).forEach((e, ei) => {
@@ -237,6 +293,8 @@ export function validatePlan(data, ctx = {}) {
       id: isStr(r.id) ? clampStr(r.id, 40) : 'r' + ri,
       name: clampStr(r.name || 'Routine', 40),
       emoji: clampStr(r.emoji || '🏋️', 8),
+      kind: routineKind,
+      ...(isNum(r.restSec) && r.restSec >= 0 ? { restSec: Math.round(r.restSec) } : {}),
       ...(POLICIES.includes(r.prog) ? { prog: r.prog } : {}),
       ...(isStr(r.why) ? { why: clampStr(r.why, 400) } : {}),
       ex
@@ -244,10 +302,9 @@ export function validatePlan(data, ctx = {}) {
   });
 
   // The week may only point at routines this bundle actually defines or valid cardio sessions.
-  const known = new Set(routines.map(r => r.id));
+  const routinesMap = new Map(routines.map(r => [r.id, r]));
   const week = {};
-  let gymSessionsCount = 0;
-  let cardioSessionsCount = 0;
+  const sessionCounts = { gym: 0, cardio: 0, hiit: 0, yoga: 0, mobility: 0 };
 
   Object.entries(data.week || {}).forEach(([d, val]) => {
     const day = +d;
@@ -265,26 +322,44 @@ export function validatePlan(data, ctx = {}) {
       }
 
       if (typeof item === 'string') {
-        if (!known.has(item)) {
+        const routine = routinesMap.get(item);
+        if (!routine) {
           errors.push(`week[${d}] points at "${item}", which is not one of the routines in this plan`);
         } else {
-          gymSessionsCount++;
-          cleanedItems.push(item);
+          const rKind = routine.kind || 'gym';
+          if (!isModalityEnabled(rKind, coachProfile, ctx)) {
+            errors.push(`${rKind.charAt(0).toUpperCase() + rKind.slice(1)} sessions are disabled in coach profile`);
+          } else {
+            sessionCounts[rKind] = (sessionCounts[rKind] || 0) + 1;
+            cleanedItems.push(item);
+          }
         }
       } else if (typeof item === 'object') {
         if (item.kind === 'cardio') {
-          if (!includeCardio) {
+          if (!isModalityEnabled('cardio', coachProfile, ctx)) {
             errors.push('Cardio sessions are disabled in coach profile');
           } else {
             validateCardioSession(item, { allowedTypes: allowedCardioTypes, where, errors });
-            cardioSessionsCount++;
+            sessionCounts.cardio = (sessionCounts.cardio || 0) + 1;
             cleanedItems.push(cleanCardioSession(item));
           }
-        } else if (item.routineId && known.has(item.routineId)) {
-          gymSessionsCount++;
-          cleanedItems.push(item);
-        } else if (item.routineId && !known.has(item.routineId)) {
+        } else if (item.routineId && routinesMap.has(item.routineId)) {
+          const routine = routinesMap.get(item.routineId);
+          const rKind = item.kind || routine?.kind || 'gym';
+          if (!isModalityEnabled(rKind, coachProfile, ctx)) {
+            errors.push(`${rKind.charAt(0).toUpperCase() + rKind.slice(1)} sessions are disabled in coach profile`);
+          } else {
+            sessionCounts[rKind] = (sessionCounts[rKind] || 0) + 1;
+            cleanedItems.push(item);
+          }
+        } else if (item.routineId && !routinesMap.has(item.routineId)) {
           errors.push(`week[${d}] points at "${item.routineId}", which is not one of the routines in this plan`);
+        } else if (item.kind && ROUTINE_KINDS.includes(item.kind)) {
+          if (!isModalityEnabled(item.kind, coachProfile, ctx)) {
+            errors.push(`${item.kind.charAt(0).toUpperCase() + item.kind.slice(1)} sessions are disabled in coach profile`);
+          } else {
+            errors.push(`${where} is not a valid routine reference or cardio session`);
+          }
         } else {
           errors.push(`${where} is not a valid routine reference or cardio session`);
         }
@@ -306,16 +381,36 @@ export function validatePlan(data, ctx = {}) {
   }));
 
   // FR-17: honour the number of training days the user asked for.
-  const want = daysPerWeek;
-  if (isInt(want, 1, 7) && Object.keys(week).length && gymSessionsCount !== want) {
-    errors.push(`the week schedules ${gymSessionsCount} days but ${want} were asked for`);
+  const want = getTargetSessions('gym', coachProfile, ctx) ?? daysPerWeek;
+  if (isInt(want, 1, 7) && Object.keys(week).length && sessionCounts.gym !== want) {
+    errors.push(`the week schedules ${sessionCounts.gym} days but ${want} were asked for`);
   }
 
-  if (cardioSessionsPerWeek != null) {
+  const cardioTarget = coachProfile.sessionsPerWeek?.cardio ?? ctx.sessionsPerWeek?.cardio;
+  if (cardioTarget != null && isInt(cardioTarget, 1, 7)) {
+    if (sessionCounts.cardio !== cardioTarget) {
+      if (sessionCounts.cardio > cardioTarget) {
+        errors.push(`the week schedules ${sessionCounts.cardio} cardio sessions which exceeds cardioSessionsPerWeek of ${cardioTarget}`);
+      } else {
+        errors.push(`the week schedules ${sessionCounts.cardio} cardio sessions but ${cardioTarget} were asked for`);
+      }
+    }
+  } else if (cardioSessionsPerWeek != null) {
     if (!isInt(cardioSessionsPerWeek, 1, 7)) {
       errors.push('cardioSessionsPerWeek must be a number between 1 and 7');
-    } else if (cardioSessionsCount > cardioSessionsPerWeek) {
-      errors.push(`the week schedules ${cardioSessionsCount} cardio sessions which exceeds cardioSessionsPerWeek of ${cardioSessionsPerWeek}`);
+    } else if (sessionCounts.cardio > cardioSessionsPerWeek) {
+      errors.push(`the week schedules ${sessionCounts.cardio} cardio sessions which exceeds cardioSessionsPerWeek of ${cardioSessionsPerWeek}`);
+    }
+  }
+
+  for (const m of ['hiit', 'yoga', 'mobility']) {
+    const target = getTargetSessions(m, coachProfile, ctx);
+    if (target != null) {
+      if (!isInt(target, 1, 7)) {
+        errors.push(`${m} target sessionsPerWeek must be a number between 1 and 7`);
+      } else if (sessionCounts[m] !== target) {
+        errors.push(`the week schedules ${sessionCounts[m]} ${m} sessions but ${target} were asked for`);
+      }
     }
   }
 
@@ -362,11 +457,15 @@ export function validateReview(data, plan, options = {}) {
     Object.entries(data.week).forEach(([d, val]) => {
       const items = Array.isArray(val) ? val : [val];
       items.forEach((item, idx) => {
-        if (item && typeof item === 'object' && item.kind === 'cardio') {
-          if (!includeCardio) {
-            errors.push('Cardio sessions are disabled in coach profile');
-          } else {
-            validateCardioSession(item, { allowedTypes: allowedCardioTypes, where: `week[${d}]` + (Array.isArray(val) ? `[${idx}]` : ''), errors });
+        if (item && typeof item === 'object') {
+          if (item.kind === 'cardio') {
+            if (!isModalityEnabled('cardio', coachProfile, options)) {
+              errors.push('Cardio sessions are disabled in coach profile');
+            } else {
+              validateCardioSession(item, { allowedTypes: allowedCardioTypes, where: `week[${d}]` + (Array.isArray(val) ? `[${idx}]` : ''), errors });
+            }
+          } else if (item.kind && !isModalityEnabled(item.kind, coachProfile, options)) {
+            errors.push(`${item.kind.charAt(0).toUpperCase() + item.kind.slice(1)} sessions are disabled in coach profile`);
           }
         }
       });
@@ -536,10 +635,22 @@ export function validateReview(data, plan, options = {}) {
       case 'add-routine': {
         const a = c.after || {};
         if (!isStr(a.name)) { errors.push(`${where}.after.name is required`); return; }
+        const rawKind = a.kind || a.type;
+        const routineKind = isStr(rawKind) ? rawKind.toLowerCase().trim() : 'gym';
+        if (!ROUTINE_KINDS.includes(routineKind)) {
+          errors.push(`${where}.after.kind "${rawKind}" is not one of: ${ROUTINE_KINDS.join(', ')}`);
+          return;
+        }
+        if (!isModalityEnabled(routineKind, coachProfile, options)) {
+          errors.push(`${routineKind.charAt(0).toUpperCase() + routineKind.slice(1)} routines are disabled in coach profile`);
+          return;
+        }
         const ex = (Array.isArray(a.ex) ? a.ex : []).filter(e => e && isStr(e.id) && isValidEx(e.id)).slice(0, MAX_EX_PER_ROUTINE);
         if (!ex.length) { errors.push(`${where}.after.ex must list at least one exercise from the library`); return; }
         out.after = {
           name: clampStr(a.name, 40), emoji: clampStr(a.emoji || '🏋️', 8),
+          kind: routineKind,
+          ...(isNum(a.restSec) && a.restSec >= 0 ? { restSec: Math.round(a.restSec) } : {}),
           ...(POLICIES.includes(a.prog) ? { prog: a.prog } : {}),
           ex: ex.map(e => ({
             id: e.id, name: getExName(e.id, e.name),
@@ -549,6 +660,7 @@ export function validateReview(data, plan, options = {}) {
             ...(isInt(e.sec, 5, 3600) ? { sec: e.sec } : {})
           }))
         };
+        if (a.id) routines.set(a.id, out.after);
         break;
       }
       case 'rename-routine':
@@ -577,20 +689,38 @@ export function validateReview(data, plan, options = {}) {
             if (!routines.has(item)) {
               errors.push(`${where}.after must be a routine id from the plan, "rest", or null`);
             } else {
-              cleanedItems.push(item);
+              const r = routines.get(item);
+              const rKind = r?.kind || 'gym';
+              if (!isModalityEnabled(rKind, coachProfile, options)) {
+                errors.push(`${rKind.charAt(0).toUpperCase() + rKind.slice(1)} sessions are disabled in coach profile`);
+              } else {
+                cleanedItems.push(item);
+              }
             }
           } else if (typeof item === 'object') {
             if (item.kind === 'cardio') {
-              if (!includeCardio) {
+              if (!isModalityEnabled('cardio', coachProfile, options)) {
                 errors.push('Cardio sessions are disabled in coach profile');
               } else {
                 validateCardioSession(item, { allowedTypes: allowedCardioTypes, where: itemWhere, errors });
                 cleanedItems.push(cleanCardioSession(item));
               }
             } else if (item.routineId && routines.has(item.routineId)) {
-              cleanedItems.push(item);
+              const r = routines.get(item.routineId);
+              const rKind = item.kind || r?.kind || 'gym';
+              if (!isModalityEnabled(rKind, coachProfile, options)) {
+                errors.push(`${rKind.charAt(0).toUpperCase() + rKind.slice(1)} sessions are disabled in coach profile`);
+              } else {
+                cleanedItems.push(item);
+              }
             } else if (item.routineId && !routines.has(item.routineId)) {
               errors.push(`${where}.after must be a routine id from the plan, "rest", or null`);
+            } else if (item.kind && ROUTINE_KINDS.includes(item.kind)) {
+              if (!isModalityEnabled(item.kind, coachProfile, options)) {
+                errors.push(`${item.kind.charAt(0).toUpperCase() + item.kind.slice(1)} sessions are disabled in coach profile`);
+              } else {
+                errors.push(`${itemWhere} must be a routine id from the plan, "rest", or cardio session`);
+              }
             } else {
               errors.push(`${itemWhere} must be a routine id from the plan, "rest", or cardio session`);
             }
@@ -623,30 +753,58 @@ export function validateReview(data, plan, options = {}) {
     }
   }
 
-  let projectedCardioCount = 0;
-  let projectedGymCount = 0;
+  const projectedCounts = { gym: 0, cardio: 0, hiit: 0, yoga: 0, mobility: 0 };
   for (const val of Object.values(projectedWeek)) {
     const items = Array.isArray(val) ? val : [val];
     for (const item of items) {
-      if (typeof item === 'string' && routines.has(item)) projectedGymCount++;
-      else if (item && typeof item === 'object') {
-        if (item.kind === 'cardio') projectedCardioCount++;
-        else if (item.routineId && routines.has(item.routineId)) projectedGymCount++;
+      if (typeof item === 'string') {
+        const r = routines.get(item);
+        const k = r?.kind || 'gym';
+        projectedCounts[k] = (projectedCounts[k] || 0) + 1;
+      } else if (item && typeof item === 'object') {
+        if (item.kind === 'cardio') {
+          projectedCounts.cardio = (projectedCounts.cardio || 0) + 1;
+        } else if (item.routineId && routines.has(item.routineId)) {
+          const r = routines.get(item.routineId);
+          const k = item.kind || r?.kind || 'gym';
+          projectedCounts[k] = (projectedCounts[k] || 0) + 1;
+        } else if (item.kind && projectedCounts[item.kind] != null) {
+          projectedCounts[item.kind] = (projectedCounts[item.kind] || 0) + 1;
+        }
       }
     }
   }
 
-  if (cardioSessionsPerWeek != null) {
+  const cardioTarget = coachProfile.sessionsPerWeek?.cardio ?? options.sessionsPerWeek?.cardio;
+  if (cardioTarget != null && isInt(cardioTarget, 1, 7)) {
+    if (projectedCounts.cardio !== cardioTarget) {
+      if (projectedCounts.cardio > cardioTarget) {
+        errors.push(`the week schedules ${projectedCounts.cardio} cardio sessions which exceeds cardioSessionsPerWeek of ${cardioTarget}`);
+      } else {
+        errors.push(`the week schedules ${projectedCounts.cardio} cardio sessions but ${cardioTarget} were asked for`);
+      }
+    }
+  } else if (cardioSessionsPerWeek != null) {
     if (!isInt(cardioSessionsPerWeek, 1, 7)) {
       errors.push('cardioSessionsPerWeek must be a number between 1 and 7');
-    } else if (projectedCardioCount > cardioSessionsPerWeek) {
-      errors.push(`the week schedules ${projectedCardioCount} cardio sessions which exceeds cardioSessionsPerWeek of ${cardioSessionsPerWeek}`);
+    } else if (projectedCounts.cardio > cardioSessionsPerWeek) {
+      errors.push(`the week schedules ${projectedCounts.cardio} cardio sessions which exceeds cardioSessionsPerWeek of ${cardioSessionsPerWeek}`);
     }
   }
 
   const hasWeekChange = changes.some(c => c.type === 'week');
-  if (hasWeekChange && isInt(daysPerWeek, 1, 7) && Object.keys(projectedWeek).length > 0 && projectedGymCount !== daysPerWeek) {
-    errors.push(`the week schedules ${projectedGymCount} days but ${daysPerWeek} were asked for`);
+  const wantGym = getTargetSessions('gym', coachProfile, options) ?? daysPerWeek;
+  if (hasWeekChange && isInt(wantGym, 1, 7) && Object.keys(projectedWeek).length > 0 && projectedCounts.gym !== wantGym) {
+    errors.push(`the week schedules ${projectedCounts.gym} days but ${wantGym} were asked for`);
+  }
+
+  for (const m of ['hiit', 'yoga', 'mobility']) {
+    const target = getTargetSessions(m, coachProfile, options);
+    if (hasWeekChange && target != null && isInt(target, 1, 7)) {
+      if (projectedCounts[m] !== target) {
+        errors.push(`the week schedules ${projectedCounts[m]} ${m} sessions but ${target} were asked for`);
+      }
+    }
   }
 
   if (errors.length) return fail(errors);
