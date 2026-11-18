@@ -1,5 +1,5 @@
 FROM node:22-alpine
-WORKDIR /app
+WORKDIR /app/api
 
 # ── AI Coach runtimes ─────────────────────────────────────────────────────────
 # Claude's Agent SDK ships with its matching native runtime. Codex is installed as a local
@@ -14,13 +14,14 @@ RUN apk add --no-cache bubblewrap libgcc libstdc++
 # db.json, no session secret, no provider credential.
 RUN addgroup -S coach && adduser -S -G coach -H -s /sbin/nologin coach
 
-COPY package.json package-lock.json* ./
+COPY api/package.json api/package-lock.json* ./
 RUN npm ci --omit=dev --include=optional \
  && npm cache clean --force \
  && node -e "import('@anthropic-ai/claude-agent-sdk').then(() => console.log('Claude Agent SDK ready'))" \
  && ./node_modules/.bin/codex --version
-COPY server.js ./
-COPY coach/ ./coach/
+COPY api/server.js ./
+COPY api/coach/ ./coach/
+COPY shared/ /app/shared/
 ENV NODE_ENV=production
 EXPOSE 3000
 CMD ["node", "server.js"]
