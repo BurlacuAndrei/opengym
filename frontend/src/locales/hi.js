@@ -245,6 +245,7 @@ export default {
   'Language': 'भाषा',
   "Exercise instructions aren't available in this language yet — they stay in English.": 'व्यायाम निर्देश अभी इस भाषा में उपलब्ध नहीं — वे अंग्रेज़ी में रहेंगे।',
   'Theme': 'थीम',
+  'System': 'सिस्टम',
   'Dark': 'डार्क',
   'Light': 'लाइट',
   'Accent color': 'एक्सेंट रंग',

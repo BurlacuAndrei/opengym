@@ -245,6 +245,7 @@ export default {
   'Language': '언어',
   "Exercise instructions aren't available in this language yet — they stay in English.": '운동 설명은 아직 이 언어로 제공되지 않아 영어로 표시됩니다.',
   'Theme': '테마',
+  'System': '시스템',
   'Dark': '다크',
   'Light': '라이트',
   'Accent color': '강조 색상',

@@ -7,6 +7,7 @@ import { ACCENTS } from './lib/format.js'
 import { t, setLang, useLang } from './lib/i18n.js'
 import { passkeyLogin } from './lib/api.js'
 import { setNav } from './lib/nav.js'
+import { applyTheme } from './lib/theme.js'
 import { useWakeLock } from './lib/wakelock.js'
 import { startFlow } from './sheets.jsx'
 import Icon from './components/Icon.jsx'
@@ -54,7 +55,7 @@ export function SessionExpiredBanner({ onSignIn }) {
         position: 'sticky',
         top: 0,
         zIndex: 100,
-        background: 'var(--bg-card, #1c1c1e)',
+        background: 'var(--surface, #181B20)',
         borderBottom: '1px solid var(--sep, rgba(255,255,255,0.12))',
         padding: '10px 14px',
         display: 'flex',
@@ -75,11 +76,23 @@ export function SessionExpiredBanner({ onSignIn }) {
 }
 
 function applyPrefs(theme, accent) {
-  const de = document.documentElement
-  de.dataset.theme = theme === 'light' ? 'light' : 'dark'
-  de.dataset.accent = ACCENTS[accent] ? accent : 'lime'
-  const meta = document.querySelector('meta[name="theme-color"]')
-  if (meta) meta.content = de.dataset.theme === 'light' ? '#f2f2f7' : '#000000'
+  applyTheme(theme)
+  document.documentElement.dataset.accent = ACCENTS[accent] ? accent : 'lime'
+}
+
+export function syncThemeEffect(theme, accent) {
+  applyPrefs(theme, accent)
+  if (theme !== 'system' || typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+  const mql = window.matchMedia('(prefers-color-scheme: dark)')
+  const onChange = e => applyTheme('system', e && typeof e.matches === 'boolean' ? e : mql)
+  if (typeof mql.addEventListener === 'function') {
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }
+  if (typeof mql.addListener === 'function') {
+    mql.addListener(onChange)
+    return () => mql.removeListener(onChange)
+  }
 }
 
 function Shell() {
@@ -90,7 +103,7 @@ function Shell() {
   const sessionExpired = useStore(s => Boolean(s.sessionExpired || s.reAuthNeeded))
   const langV = useLang()   // re-renders the whole shell when the language (pack) changes
   useEffect(() => { setNav(navigate) }, [navigate])
-  useEffect(() => { applyPrefs(S.theme, S.accent) }, [S.theme, S.accent])
+  useEffect(() => syncThemeEffect(S.theme, S.accent), [S.theme, S.accent])
   useEffect(() => { setLang(S.lang || 'en') }, [S.lang])
   useEffect(() => { document.documentElement.lang = S.lang || 'en' }, [langV, S.lang])
   // every tab/route change starts at the top of the page

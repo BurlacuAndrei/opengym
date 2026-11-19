@@ -142,7 +142,7 @@ export default function Settings() {
       <Row icon="bell" iconTint="var(--pink)" title={t('Sounds')}>
         <Switch checked={!!S.sound} onChange={v => update(s => { s.sound = v })} />
       </Row>
-      <Row icon="bell" iconTint="var(--cyan)" title={t('Voice split cues')}
+      <Row icon="bell" iconTint="var(--teal)" title={t('Voice split cues')}
         subtitle={t('Audio announcements on split completion')}>
         <Switch checked={S.voiceCues !== false} onChange={v => update(s => { s.voiceCues = v })} />
       </Row>
@@ -173,8 +173,12 @@ export default function Settings() {
       <Row icon="moon" iconTint="var(--indigo)" title={t('Theme')}>
         <Segmented
           className="seg-inline"
-          options={[{ value: 'dark', icon: 'moon', label: t('Dark') }, { value: 'light', icon: 'sun', label: t('Light') }]}
-          value={S.theme === 'light' ? 'light' : 'dark'}
+          options={[
+            { value: 'system', label: t('System') },
+            { value: 'light', icon: 'sun', label: t('Light') },
+            { value: 'dark', icon: 'moon', label: t('Dark') }
+          ]}
+          value={S.theme === 'system' || S.theme === 'light' || S.theme === 'dark' ? S.theme : 'dark'}
           onChange={v => update(s => { s.theme = v })}
         />
       </Row>

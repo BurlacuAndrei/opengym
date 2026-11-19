@@ -245,6 +245,7 @@ export default {
   'Language': '语言',
   "Exercise instructions aren't available in this language yet — they stay in English.": '动作说明暂无此语言版本——保持英文。',
   'Theme': '主题',
+  'System': '系统',
   'Dark': '深色',
   'Light': '浅色',
   'Accent color': '强调色',

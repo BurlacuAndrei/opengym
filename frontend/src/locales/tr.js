@@ -245,6 +245,7 @@ export default {
   'Language': 'Dil',
   "Exercise instructions aren't available in this language yet — they stay in English.": 'Egzersiz talimatları bu dilde henüz yok — İngilizce kalır.',
   'Theme': 'Tema',
+  'System': 'Sistem',
   'Dark': 'Koyu',
   'Light': 'Açık',
   'Accent color': 'Vurgu rengi',

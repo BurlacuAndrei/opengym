@@ -1809,4 +1809,148 @@ describe('useStore', () => {
       expect(typeof mod.normalizeRoutine).toBe('function')
     })
   })
+
+  describe('theme & Settings (#91)', () => {
+    let origDocument
+    let origMatchMedia
+    let origScrollTo
+
+    beforeEach(() => {
+      origDocument = globalThis.document
+      origMatchMedia = globalThis.window?.matchMedia
+      origScrollTo = globalThis.window?.scrollTo
+    })
+
+    afterEach(() => {
+      if (origDocument === undefined) delete globalThis.document
+      else globalThis.document = origDocument
+      if (globalThis.window) {
+        if (origMatchMedia === undefined) delete globalThis.window.matchMedia
+        else globalThis.window.matchMedia = origMatchMedia
+        if (origScrollTo === undefined) delete globalThis.window.scrollTo
+        else globalThis.window.scrollTo = origScrollTo
+      }
+      vi.doUnmock('react')
+      vi.doUnmock('react-router-dom')
+      vi.doUnmock('../lib/i18n.js')
+    })
+
+    function setupFakeDom(matches = true) {
+      const meta = { content: '#111315' }
+      const de = { dataset: {}, lang: 'en' }
+      globalThis.document = {
+        documentElement: de,
+        querySelector: vi.fn(sel => (sel === 'meta[name="theme-color"]' ? meta : null)),
+        visibilityState: 'hidden'
+      }
+      const listeners = new Set()
+      const mql = {
+        matches,
+        addEventListener: vi.fn((ev, cb) => { if (ev === 'change') listeners.add(cb) }),
+        removeEventListener: vi.fn((ev, cb) => { if (ev === 'change') listeners.delete(cb) })
+      }
+      globalThis.window.matchMedia = vi.fn(() => mql)
+      globalThis.window.scrollTo = vi.fn()
+      return { de, meta, mql, listeners }
+    }
+
+    it('resolves system, light, dark, and missing/invalid preferences safely', async () => {
+      delete globalThis.window.matchMedia
+      const { resolveTheme } = await import('../lib/theme.js')
+
+      expect(resolveTheme('light')).toBe('light')
+      expect(resolveTheme('dark')).toBe('dark')
+      expect(resolveTheme(undefined)).toBe('dark')
+      expect(resolveTheme('invalid')).toBe('dark')
+      expect(resolveTheme('system', null)).toBe('dark')
+      expect(resolveTheme('system', { matches: true })).toBe('dark')
+      expect(resolveTheme('system', { matches: false })).toBe('light')
+
+      globalThis.window.matchMedia = vi.fn(() => ({ matches: false }))
+      expect(resolveTheme('system')).toBe('light')
+    })
+
+    it('applyTheme sets <html data-theme> and <meta name="theme-color"> for light/dark/system', async () => {
+      const { de, meta, mql } = setupFakeDom(false)
+      const { applyTheme } = await import('../lib/theme.js')
+
+      applyTheme('system')
+      expect(de.dataset.theme).toBe('light')
+      expect(meta.content).toBe('#F6F6F3')
+
+      mql.matches = true
+      applyTheme('system')
+      expect(de.dataset.theme).toBe('dark')
+      expect(meta.content).toBe('#111315')
+
+      applyTheme('light')
+      expect(de.dataset.theme).toBe('light')
+      expect(meta.content).toBe('#F6F6F3')
+
+      applyTheme('dark')
+      expect(de.dataset.theme).toBe('dark')
+      expect(meta.content).toBe('#111315')
+    })
+
+    it('syncThemeEffect attaches and cleans up matchMedia change listener when theme === system (including Safari fallback)', async () => {
+      const { de, meta, mql, listeners } = setupFakeDom(false)
+      const { syncThemeEffect } = await import('../App.jsx')
+
+      // Non-system theme does not attach listener
+      const noCleanup = syncThemeEffect('dark', 'lime')
+      expect(noCleanup).toBeUndefined()
+      expect(de.dataset.theme).toBe('dark')
+      expect(de.dataset.accent).toBe('lime')
+      expect(mql.addEventListener).not.toHaveBeenCalled()
+
+      // System theme attaches change listener and updates on system changes
+      const cleanup = syncThemeEffect('system', 'sky')
+      expect(de.dataset.theme).toBe('light')
+      expect(de.dataset.accent).toBe('sky')
+      expect(meta.content).toBe('#F6F6F3')
+      expect(mql.addEventListener).toHaveBeenCalledTimes(1)
+
+      mql.matches = true
+      for (const cb of listeners) cb({ matches: true })
+      expect(de.dataset.theme).toBe('dark')
+      expect(meta.content).toBe('#111315')
+
+      cleanup()
+      expect(mql.removeEventListener).toHaveBeenCalledTimes(1)
+
+      // Safari addListener / removeListener fallback
+      const legacyListeners = new Set()
+      const legacyMql = {
+        matches: true,
+        addListener: vi.fn(cb => legacyListeners.add(cb)),
+        removeListener: vi.fn(cb => legacyListeners.delete(cb))
+      }
+      globalThis.window.matchMedia = vi.fn(() => legacyMql)
+      const legacyCleanup = syncThemeEffect('system', 'lime')
+      expect(legacyMql.addListener).toHaveBeenCalledTimes(1)
+      for (const cb of legacyListeners) cb({ matches: false })
+      expect(de.dataset.theme).toBe('light')
+      expect(meta.content).toBe('#F6F6F3')
+      legacyCleanup()
+      expect(legacyMql.removeListener).toHaveBeenCalledTimes(1)
+    })
+
+    it('renders 3-option System / Light / Dark Segmented control in Settings', async () => {
+      setupFakeDom(true)
+      vi.doMock('react-router-dom', () => ({
+        useNavigate: () => vi.fn()
+      }))
+      const React = (await import('react')).default
+      const { renderToStaticMarkup } = await import('react-dom/server')
+      useStore.setState(s => ({ ...s, S: { ...s.S, theme: 'system' } }))
+      const Settings = (await import('../views/Settings.jsx')).default
+
+      const html = renderToStaticMarkup(React.createElement(Settings))
+      expect(html).toContain('System')
+      expect(html).toContain('Light')
+      expect(html).toContain('Dark')
+      expect(html).toContain('--n:3')
+      expect(html).not.toContain('var(--cyan)')
+    })
+  })
 })

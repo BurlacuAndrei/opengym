@@ -245,6 +245,7 @@ export default {
   'Language': 'Idioma',
   "Exercise instructions aren't available in this language yet — they stay in English.": 'As instruções dos exercícios ainda não existem neste idioma — ficam em inglês.',
   'Theme': 'Tema',
+  'System': 'Sistema',
   'Dark': 'Escuro',
   'Light': 'Claro',
   'Accent color': 'Cor de destaque',
