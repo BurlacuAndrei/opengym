@@ -15,7 +15,7 @@ const DEFAULT_STATE = {
   unit: 'kg', restSec: 90, sound: true, keepAwake: true, lang: 'en',
   theme: 'dark', accent: 'lime', body: 'male', targetW: null,
   bodyweight: [], routines: [], week: {}, dayPlan: {},
-  exWeights: {}, workouts: [], cardioActivities: [], routes: [], savedRoutes: [], gear: [], active: null, customEx: [], gifSize: 'full',
+  exWeights: {}, workouts: [], cardioActivities: [], freestyleSessions: [], routes: [], savedRoutes: [], gear: [], active: null, customEx: [], gifSize: 'full',
   reminder: { on: false, time: '08:00', tz: null }, effort: null
 }
 
@@ -151,6 +151,7 @@ export async function exportBackup(stateOrOptions = {}, maybeOptions = {}) {
     (stateOrOptions.workouts ||
       stateOrOptions.routines ||
       stateOrOptions.cardioActivities ||
+      stateOrOptions.freestyleSessions ||
       stateOrOptions.routes ||
       stateOrOptions.savedRoutes ||
       stateOrOptions.unit)
@@ -180,6 +181,9 @@ export async function exportBackup(stateOrOptions = {}, maybeOptions = {}) {
   }
 
   const stateBlob = JSON.parse(JSON.stringify(targetState))
+  if (!Array.isArray(stateBlob.freestyleSessions)) {
+    stateBlob.freestyleSessions = []
+  }
   const adapter = options.adapter || getCardioAdapter()
   const tracks = {}
   const routeFiles = {}
@@ -337,6 +341,9 @@ export async function importBackup(backupData, options = {}) {
   }
 
   const mergedState = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), stateBlob)
+  if (!Array.isArray(mergedState.freestyleSessions)) {
+    mergedState.freestyleSessions = []
+  }
   const store = options.store
   const push = options.push ?? false
 

@@ -536,4 +536,26 @@ describe('Single-file JSON Backup Export/Import with Tracks & Routes (Issue #82)
       expect(getLocalBackups()).toHaveLength(0)
     })
   })
+
+  describe('freestyleSessions backup preservation (Issue #92)', () => {
+    it('exports and imports freestyleSessions and defaults missing/null to []', async () => {
+      const fs1 = { id: 'fs-1', kind: 'mobility', durationMs: 600000, rpe: 6, startTime: '2026-11-12T10:00:00Z' }
+      const exported = await exportBackup({ freestyleSessions: [fs1] }, { adapter: memoryAdapter })
+      expect(exported.state.freestyleSessions).toEqual([fs1])
+
+      const imported = await importBackup(exported.json, { adapter: memoryAdapter, store: useStore })
+      expect(imported.state.freestyleSessions).toEqual([fs1])
+      expect(useStore.getState().S.freestyleSessions).toEqual([fs1])
+
+      // Missing or null freestyleSessions defaults to []
+      const nullBackup = { version: 1, state: { unit: 'kg', freestyleSessions: null } }
+      const importedNull = await importBackup(nullBackup, { adapter: memoryAdapter, store: useStore })
+      expect(importedNull.state.freestyleSessions).toEqual([])
+      expect(useStore.getState().S.freestyleSessions).toEqual([])
+
+      const missingBackup = { version: 1, state: { unit: 'lb' } }
+      const importedMissing = await importBackup(missingBackup, { adapter: memoryAdapter, store: useStore })
+      expect(importedMissing.state.freestyleSessions).toEqual([])
+    })
+  })
 })

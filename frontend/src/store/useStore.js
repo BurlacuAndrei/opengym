@@ -44,7 +44,7 @@ export const DEF = {
   unit: 'kg', restSec: 90, sound: true, keepAwake: true, lang: 'en',
   theme: 'dark', accent: 'lime', body: 'male', targetW: null,
   bodyweight: [], routines: [], week: {}, dayPlan: {},
-  exWeights: {}, workouts: [], cardioActivities: [], gear: [], active: null, customEx: [], gifSize: 'full',
+  exWeights: {}, workouts: [], cardioActivities: [], freestyleSessions: [], gear: [], active: null, customEx: [], gifSize: 'full',
   // effort: which per-set effort scale is logged — 'none' | 'rir' | 'rpe'. null, not 'none', so
   // that a profile which never chose (loaded state is overlaid on DEF, on every path: local,
   // server pull, backup import) still falls back to the `showRir` boolean this replaced and
@@ -112,6 +112,7 @@ function loadState() {
     const raw = localStorage.getItem(KEY)
     if (raw) {
       const state = Object.assign(clone(DEF), JSON.parse(raw))
+      if (!Array.isArray(state.freestyleSessions)) state.freestyleSessions = []
       return migrateSchedule(state)
     }
   } catch (e) { /* ignore */ }
@@ -265,7 +266,11 @@ export const useStore = create((set, get) => {
       if (S && S.state && (S.tracks || S.routeFiles || S.version)) {
         stateToPersist = S.state
       }
-      persist(clone(stateToPersist), push)
+      const nextState = clone(stateToPersist)
+      if (nextState && typeof nextState === 'object' && !Array.isArray(nextState.freestyleSessions)) {
+        nextState.freestyleSessions = []
+      }
+      persist(nextState, push)
       if (S && (S.tracks || S.routeFiles)) {
         const adapter = getCardioAdapter()
         if (S.tracks) {

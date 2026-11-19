@@ -1,6 +1,84 @@
 // Pure helpers over the state object S (ported 1:1 from the vanilla app).
 import { todayISO, isoOf, weekKey, fmtNum } from './format.js'
 import { isCardio } from './exercises.js'
+import { getRoutineKind, isRoutineKind } from './routine-kind.js'
+import { getCardioPlans } from './cardio-plan.js'
+
+const FLOW_KINDS = new Set(['hiit', 'yoga', 'mobility'])
+const isRestToken = id => id === 'rest' || id === '__rest__'
+
+function toIdList(val) {
+  if (Array.isArray(val)) return val.filter(x => typeof x === 'string' && x.trim() !== '').map(x => x.trim())
+  if (typeof val === 'string' && val.trim() !== '') return [val.trim()]
+  return []
+}
+
+function dedupById(items) {
+  const seen = new Set()
+  const out = []
+  for (const item of items) {
+    if (!item || !item.id || seen.has(item.id)) continue
+    seen.add(item.id)
+    out.push(item)
+  }
+  return out
+}
+
+function parseValidISO(val) {
+  if (val == null || val === '') return null
+  if (typeof val === 'string') {
+    const s = val.trim()
+    if (!s) return null
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (m) {
+      const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3])
+      const dt = new Date(y, mo - 1, d)
+      if (dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d) {
+        return `${m[1]}-${m[2]}-${m[3]}`
+      }
+      return null
+    }
+    const dt = new Date(s)
+    return !isNaN(dt.getTime()) ? isoOf(dt) : null
+  }
+  if (typeof val === 'number') {
+    if (!Number.isFinite(val) || val <= 0) return null
+    const dt = new Date(val)
+    return !isNaN(dt.getTime()) ? isoOf(dt) : null
+  }
+  if (val instanceof Date) {
+    return !isNaN(val.getTime()) ? isoOf(val) : null
+  }
+  return null
+}
+
+function extractEntryISO(entry) {
+  if (!entry || typeof entry !== 'object') return null
+  return (
+    parseValidISO(entry.d) ||
+    parseValidISO(entry.date) ||
+    parseValidISO(entry.startTime) ||
+    parseValidISO(entry.start) ||
+    parseValidISO(entry.completedAt)
+  )
+}
+
+function extractEntryTs(entry, iso) {
+  if (entry && typeof entry === 'object') {
+    for (const v of [entry.start, entry.startTime, entry.completedAt, entry.createdAt]) {
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v
+      if (typeof v === 'string' && v.trim()) {
+        const ts = new Date(v).getTime()
+        if (Number.isFinite(ts)) return ts
+      }
+    }
+  }
+  if (iso) {
+    const ts = new Date(iso + 'T12:00:00').getTime()
+    if (Number.isFinite(ts)) return ts
+  }
+  return 0
+}
 
 // How an exercise is logged (issue #16). This used to be derived from the body part alone,
 // which meant a plank or a farmer's carry could only be timed by filing it under cardio.
@@ -120,15 +198,101 @@ export function bestWeightFor(S, exId) {
   return best
 }
 export function effectiveRoutineId(S, iso) {
-  const ov = S.dayPlan[iso]
-  if (ov === 'rest') return null
-  if (ov && S.routines.some(r => r.id === ov)) return ov
-  const wd = new Date(iso + 'T12:00:00').getDay()
-  return S.week[wd] || null
+  if (!S || !iso) return null
+  const validIso = parseValidISO(iso)
+  if (!validIso) return null
+  const routines = Array.isArray(S.routines) ? S.routines.filter(Boolean) : []
+  const ovRaw = toIdList(S.dayPlan?.[validIso])
+  if (ovRaw.some(isRestToken)) return null
+  if (ovRaw.length > 0) {
+    const match = ovRaw.find(id => routines.some(r => r.id === id))
+    return match || null
+  }
+  const wd = new Date(validIso + 'T12:00:00').getDay()
+  const weekRaw = toIdList(S.week?.[wd])
+  if (weekRaw.some(isRestToken)) return null
+  if (weekRaw.length === 0) return null
+  const match = weekRaw.find(id => routines.some(r => r.id === id))
+  if (match) return match
+  if (routines.length === 0) {
+    const cardioIds = new Set(getCardioPlans(S).map(p => p?.id).filter(Boolean))
+    return weekRaw.find(id => !cardioIds.has(id)) || null
+  }
+  return null
 }
 export function effectiveRoutine(S, iso) {
   const id = effectiveRoutineId(S, iso)
   return id ? S.routines.find(r => r.id === id) || null : null
+}
+
+/**
+ * Resolves all planned and completed sessions for a given ISO date (Issue #92).
+ *
+ * @param {Object} S - Application state
+ * @param {string} isoDate - Date string (YYYY-MM-DD)
+ * @returns {{ routines: Array, cardioPlans: Array, completed: Array, isRest: boolean, isOverride: boolean }}
+ */
+export function effectiveDaySessions(S, isoDate) {
+  const empty = { routines: [], cardioPlans: [], completed: [], isRest: false, isOverride: false }
+  if (!S || typeof S !== 'object' || !isoDate) return empty
+
+  const validIso = parseValidISO(isoDate)
+  if (!validIso) return empty
+  const wd = new Date(validIso + 'T12:00:00').getDay()
+
+  const allRoutines = Array.isArray(S.routines) ? S.routines.filter(Boolean) : []
+  const routineById = new Map(allRoutines.map(r => [r.id, r]))
+  const allCardioPlans = getCardioPlans(S).filter(Boolean)
+  const cardioPlanById = new Map(allCardioPlans.map(p => [p.id, p]))
+
+  const rawOv = toIdList(S.dayPlan?.[validIso])
+  const isOverride = rawOv.length > 0
+
+  let routines = []
+  let cardioPlans = []
+  let isRest = false
+
+  if (isOverride) {
+    if (rawOv.some(isRestToken)) {
+      isRest = true
+    } else {
+      const seenIds = new Set()
+      for (const id of rawOv) {
+        if (seenIds.has(id)) continue
+        seenIds.add(id)
+        if (routineById.has(id)) routines.push(routineById.get(id))
+        if (cardioPlanById.has(id)) cardioPlans.push(cardioPlanById.get(id))
+      }
+      for (const p of allCardioPlans) {
+        if (p.date === validIso) cardioPlans.push(p)
+      }
+      cardioPlans = dedupById(cardioPlans)
+    }
+  } else {
+    const rawWeek = toIdList(S.week?.[wd])
+    if (rawWeek.some(isRestToken)) {
+      isRest = true
+      cardioPlans = dedupById(allCardioPlans.filter(p => p.date === validIso))
+    } else {
+      const seenIds = new Set()
+      for (const id of rawWeek) {
+        if (seenIds.has(id)) continue
+        seenIds.add(id)
+        if (routineById.has(id)) routines.push(routineById.get(id))
+        if (cardioPlanById.has(id)) cardioPlans.push(cardioPlanById.get(id))
+      }
+      for (const p of allCardioPlans) {
+        if (p.date === validIso || p.day === wd) {
+          cardioPlans.push(p)
+        }
+      }
+      cardioPlans = dedupById(cardioPlans)
+    }
+  }
+
+  const completed = buildUnifiedEntries(S, { fallbackToday: false }).filter(item => item.d === validIso)
+
+  return { routines, cardioPlans, completed, isRest, isOverride }
 }
 export function buildSets(S, cfg) {
   const last = lastEntryFor(S, cfg.id)
@@ -197,11 +361,14 @@ export function unitOf(units, idx) { return units.find(u => u.includes(idx)) || 
 export function streakWeeks(S) {
   const workouts = Array.isArray(S?.workouts) ? S.workouts : []
   const cardios = Array.isArray(S?.cardioActivities) ? S.cardioActivities : []
-  if (!workouts.length && !cardios.length) return 0
-  const weeks = new Set([
-    ...workouts.map(w => weekKey(w.d)),
-    ...cardios.map(c => weekKey(c.d || (c.startTime ? c.startTime.slice(0, 10) : todayISO())))
-  ])
+  const freestyles = Array.isArray(S?.freestyleSessions) ? S.freestyleSessions : []
+  if (!workouts.length && !cardios.length && !freestyles.length) return 0
+  const weeks = new Set()
+  for (const entry of [...workouts, ...cardios, ...freestyles]) {
+    const iso = extractEntryISO(entry)
+    if (iso) weeks.add(weekKey(iso))
+  }
+  if (!weeks.size) return 0
   let streak = 0
   const cur = new Date()
   for (let i = 0; i < 520; i++) {
@@ -213,54 +380,70 @@ export function streakWeeks(S) {
   return streak
 }
 
-/**
- * Unified history helper: merges workouts and cardio activities into a single list
- * sorted by date descending (newest first).
- *
- * Supports entry types: 'workout' | 'cardio'
- *
- * @param {Object} S - Application state
- * @param {string|Object} [filterOrOpts='all'] - Filter ('all' | 'workout' | 'cardio') or options object
- * @returns {Array<Object>} Sorted unified history entries
- */
-export function unifiedHistory(S, filterOrOpts = 'all') {
-  if (!S) return []
-  const filter = typeof filterOrOpts === 'string' ? filterOrOpts : (filterOrOpts?.filter || 'all')
-
+function buildUnifiedEntries(S, { fallbackToday = true } = {}) {
+  if (!S || typeof S !== 'object') return []
+  const routines = Array.isArray(S.routines) ? S.routines : []
+  const routineById = new Map(routines.filter(Boolean).map(r => [r.id, r]))
   const items = []
 
-  if (filter === 'all' || filter === 'workout') {
-    const workouts = Array.isArray(S.workouts) ? S.workouts : []
-    for (const w of workouts) {
-      const d = w.d || (w.start ? isoOf(new Date(w.start)) : todayISO())
-      const ts = w.start || (d ? new Date(d + 'T12:00:00').getTime() : 0)
-      items.push({
-        ...w,
-        entryType: 'workout',
-        type: 'workout',
-        d,
-        date: d,
-        _ts: ts
-      })
-    }
+  const workouts = Array.isArray(S.workouts) ? S.workouts : []
+  for (const w of workouts) {
+    if (!w || typeof w !== 'object') continue
+    const rawD = extractEntryISO(w) || parseValidISO(w.createdAt)
+    const d = rawD || (fallbackToday ? todayISO() : null)
+    const ts = extractEntryTs(w, d)
+    const routine = w.routineId ? routineById.get(w.routineId) : null
+    const kind = (w.kind && isRoutineKind(w.kind)) ? w.kind : getRoutineKind(routine || w)
+    const pillar = FLOW_KINDS.has(kind) ? 'flow' : 'strength'
+    items.push({
+      ...w,
+      entryType: 'workout',
+      type: 'workout',
+      kind,
+      pillar,
+      d,
+      date: d,
+      _ts: ts
+    })
   }
 
-  if (filter === 'all' || filter === 'cardio') {
-    const cardios = Array.isArray(S.cardioActivities) ? S.cardioActivities : []
-    for (const c of cardios) {
-      const d = c.d || (c.startTime ? (typeof c.startTime === 'string' && c.startTime.length >= 10 ? c.startTime.slice(0, 10) : isoOf(new Date(c.startTime))) : todayISO())
-      const ts = c.startTime ? new Date(c.startTime).getTime() : (d ? new Date(d + 'T12:00:00').getTime() : 0)
-      items.push({
-        ...c,
-        entryType: 'cardio',
-        type: 'cardio',
-        cardioType: c.type || 'run',
-        sport: c.type || 'run',
-        d,
-        date: d,
-        _ts: ts
-      })
-    }
+  const cardios = Array.isArray(S.cardioActivities) ? S.cardioActivities : []
+  for (const c of cardios) {
+    if (!c || typeof c !== 'object') continue
+    const rawD = extractEntryISO(c) || parseValidISO(c.createdAt)
+    const d = rawD || (fallbackToday ? todayISO() : null)
+    const ts = extractEntryTs(c, d)
+    items.push({
+      ...c,
+      entryType: 'cardio',
+      type: 'cardio',
+      cardioType: c.type || 'run',
+      sport: c.type || 'run',
+      pillar: 'cardio',
+      d,
+      date: d,
+      _ts: ts
+    })
+  }
+
+  const freestyles = Array.isArray(S.freestyleSessions) ? S.freestyleSessions : []
+  for (const f of freestyles) {
+    if (!f || typeof f !== 'object') continue
+    const rawD = extractEntryISO(f) || parseValidISO(f.createdAt)
+    const d = rawD || (fallbackToday ? todayISO() : null)
+    const ts = extractEntryTs(f, d)
+    const kind = f.kind != null ? String(f.kind).trim().toLowerCase() : ''
+    const pillar = FLOW_KINDS.has(kind) ? 'flow' : 'freestyle'
+    items.push({
+      ...f,
+      entryType: 'freestyle',
+      type: 'freestyle',
+      kind,
+      pillar,
+      d,
+      date: d,
+      _ts: ts
+    })
   }
 
   // Sort descending by date first, then timestamp within the same date
@@ -269,6 +452,37 @@ export function unifiedHistory(S, filterOrOpts = 'all') {
     if (dComp !== 0) return dComp
     return (b._ts || 0) - (a._ts || 0)
   })
+
+  return items
+}
+
+/**
+ * Unified history helper: merges workouts, cardio activities, and freestyle sessions
+ * into a single list sorted by date descending (newest first).
+ *
+ * Supports entry types: 'workout' | 'cardio' | 'freestyle'
+ * Supports pillars: 'strength' | 'cardio' | 'flow' | 'freestyle'
+ *
+ * @param {Object} S - Application state
+ * @param {string|Object} [filterOrOpts='all'] - Filter ('all' | 'workout' | 'strength' | 'cardio' | 'flow') or options object
+ * @returns {Array<Object>} Sorted unified history entries
+ */
+export function unifiedHistory(S, filterOrOpts = 'all') {
+  if (!S) return []
+  const rawFilter = typeof filterOrOpts === 'string' ? filterOrOpts : (filterOrOpts?.filter || 'all')
+  const filter = String(rawFilter || 'all').toLowerCase()
+
+  let items = buildUnifiedEntries(S, { fallbackToday: true })
+
+  if (filter === 'strength' || filter === 'workout') {
+    items = items.filter(item => item.pillar === 'strength')
+  } else if (filter === 'cardio') {
+    items = items.filter(item => item.pillar === 'cardio')
+  } else if (filter === 'flow') {
+    items = items.filter(item => item.pillar === 'flow' || item.pillar === 'freestyle')
+  } else if (filter === 'freestyle') {
+    items = items.filter(item => item.entryType === 'freestyle')
+  }
 
   if (typeof filterOrOpts === 'object' && filterOrOpts?.limit && filterOrOpts.limit > 0) {
     return items.slice(0, filterOrOpts.limit)

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { modeOf, isTimed, fmtSec, setLabel, defaultConfig, buildSets, exLine, workoutVolume, effortOf, stepEffort, capEffort, unifiedHistory, getUnifiedHistory, groupHistoryByDate, streakWeeks } from './history.js'
+import { modeOf, isTimed, fmtSec, setLabel, defaultConfig, buildSets, exLine, workoutVolume, effortOf, stepEffort, capEffort, unifiedHistory, getUnifiedHistory, groupHistoryByDate, streakWeeks, effectiveRoutineId, effectiveDaySessions } from './history.js'
 import { EXDB } from './exercises.js'
 
 // Real ids out of the shipped catalogue, so the body-part fallback is exercised for real.
@@ -447,6 +447,172 @@ describe('streakWeeks with cardio activities (Issue #52)', () => {
       cardioActivities: [{ id: 'c1', startTime: lastWeekDate.toISOString() }]
     }
     expect(streakWeeks(S)).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe('unifiedHistory, streakWeeks & effectiveDaySessions (Issue #92)', () => {
+  it('merges workouts, cardioActivities, and freestyleSessions with canonical entryType and pillar', () => {
+    const S = {
+      routines: [
+        { id: 'r-gym', name: 'Push', kind: 'gym' },
+        { id: 'r-yoga', name: 'Flow', kind: 'yoga' }
+      ],
+      workouts: [
+        { id: 'w-gym', d: '2026-11-10', start: 1762770000000, routineId: 'r-gym' },
+        { id: 'w-yoga', d: '2026-11-11', start: 1762850000000, routineId: 'r-yoga' },
+        { id: 'w-hiit', d: '2026-11-12', start: 1762930000000, kind: 'hiit' }
+      ],
+      cardioActivities: [
+        { id: 'c-run', type: 'run', startTime: '2026-11-13T08:00:00Z', durationMs: 1800000 }
+      ],
+      freestyleSessions: [
+        { id: 'f-mob', kind: 'mobility', startTime: '2026-11-14T09:00:00Z', durationMs: 900000 },
+        { id: 'f-other', kind: 'stretching', startTime: '2026-11-15T09:00:00Z', durationMs: 600000 }
+      ]
+    }
+
+    const all = unifiedHistory(S)
+    expect(all.map(x => x.id)).toEqual(['f-other', 'f-mob', 'c-run', 'w-hiit', 'w-yoga', 'w-gym'])
+
+    const byId = Object.fromEntries(all.map(x => [x.id, x]))
+    expect(byId['w-gym'].entryType).toBe('workout')
+    expect(byId['w-gym'].pillar).toBe('strength')
+    expect(byId['w-yoga'].entryType).toBe('workout')
+    expect(byId['w-yoga'].pillar).toBe('flow')
+    expect(byId['w-hiit'].pillar).toBe('flow')
+    expect(byId['c-run'].entryType).toBe('cardio')
+    expect(byId['c-run'].pillar).toBe('cardio')
+    expect(byId['f-mob'].entryType).toBe('freestyle')
+    expect(byId['f-mob'].pillar).toBe('flow')
+    expect(byId['f-other'].entryType).toBe('freestyle')
+    expect(byId['f-other'].pillar).toBe('freestyle')
+
+    // Filters: strength / workout alias, cardio, flow (includes flow + freestyle), limit
+    expect(unifiedHistory(S, 'strength').map(x => x.id)).toEqual(['w-gym'])
+    expect(unifiedHistory(S, 'workout').map(x => x.id)).toEqual(['w-gym'])
+    expect(unifiedHistory(S, 'cardio').map(x => x.id)).toEqual(['c-run'])
+    expect(unifiedHistory(S, 'flow').map(x => x.id)).toEqual(['f-other', 'f-mob', 'w-hiit', 'w-yoga'])
+    expect(unifiedHistory(S, { filter: 'flow', limit: 2 }).map(x => x.id)).toEqual(['f-other', 'f-mob'])
+  })
+
+  it('streakWeeks counts freestyleSessions, multiple date formats, and ignores invalid dates', () => {
+    const isoOfDate = d => {
+      const pad = n => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    }
+    const now = new Date()
+    const w1 = new Date(now)
+    const w2 = new Date(now); w2.setDate(w2.getDate() - 7)
+    const w3 = new Date(now); w3.setDate(w3.getDate() - 14)
+    const w4 = new Date(now); w4.setDate(w4.getDate() - 21)
+
+    const S = {
+      workouts: [
+        { id: 'w-cur', date: isoOfDate(w1) },
+        { id: 'w-bad1', d: 'not-a-date' },
+        { id: 'w-bad2', d: '2026-02-30' },
+        { id: 'w-empty' }
+      ],
+      cardioActivities: [
+        { id: 'c-prev', startTime: w2.getTime() },
+        { id: 'c-zero', startTime: 0 }
+      ],
+      freestyleSessions: [
+        { id: 'f-w3', completedAt: w3.toISOString() },
+        { id: 'f-w4', start: w4.getTime() },
+        { id: 'f-bad', startTime: 'invalid' }
+      ]
+    }
+    expect(streakWeeks(S)).toBeGreaterThanOrEqual(4)
+    expect(streakWeeks({ workouts: [{ d: 'bad' }], cardioActivities: [{ startTime: null }], freestyleSessions: [{}] })).toBe(0)
+  })
+
+  it('effectiveRoutineId handles scalar, array, empty, rest, and __rest__ tokens', () => {
+    const S = {
+      routines: [{ id: 'r1', name: 'Push' }, { id: 'r2', name: 'Pull' }],
+      cardioPlans: [{ id: 'cp1', type: 'run', day: 1 }],
+      week: {
+        1: ['cp1', 'r1'], // Monday 2026-11-16
+        2: 'r2',          // Tuesday 2026-11-17
+        3: ['rest'],      // Wednesday 2026-11-18
+        4: '__rest__',    // Thursday 2026-11-19
+        5: []             // Friday 2026-11-20
+      },
+      dayPlan: {
+        '2026-11-17': 'rest',
+        '2026-11-18': ['r2', 'r1'],
+        '2026-11-20': ['__rest__'],
+        '2026-11-21': ['cp1']
+      }
+    }
+
+    expect(effectiveRoutineId(S, '2026-11-16')).toBe('r1')
+    expect(effectiveRoutineId(S, '2026-11-17')).toBeNull()
+    expect(effectiveRoutineId(S, '2026-11-18')).toBe('r2')
+    expect(effectiveRoutineId(S, '2026-11-19')).toBeNull()
+    expect(effectiveRoutineId(S, '2026-11-20')).toBeNull()
+    expect(effectiveRoutineId(S, '2026-11-21')).toBeNull()
+  })
+
+  it('effectiveDaySessions resolves weekly, overrides, rest overrides, deduplication, and completed sessions', () => {
+    const r1 = { id: 'r1', name: 'Upper', kind: 'gym' }
+    const r2 = { id: 'r2', name: 'Yoga', kind: 'yoga' }
+    const cpMon = { id: 'cp-mon', type: 'run', day: 1 }
+    const cpDate = { id: 'cp-date', type: 'ride', date: '2026-11-16' }
+
+    const base = {
+      routines: [r1, r2],
+      cardioPlans: [cpMon, cpDate],
+      week: {
+        1: ['r1', 'r1', 'cp-mon'], // Monday 2026-11-16
+        2: ['__rest__']            // Tuesday 2026-11-17
+      },
+      dayPlan: {},
+      workouts: [{ id: 'w1', d: '2026-11-16', start: '2026-11-16T06:00:00Z', routineId: 'r1' }],
+      cardioActivities: [{ id: 'c1', type: 'run', startTime: '2026-11-16T08:00:00Z' }],
+      freestyleSessions: [{ id: 'f1', kind: 'yoga', startTime: '2026-11-16T18:00:00Z' }]
+    }
+
+    // Standard Monday: deduplicated r1, cp-mon, and date-specific cp-date, plus all 3 completed sessions
+    const mon = effectiveDaySessions(base, '2026-11-16')
+    expect(mon.isRest).toBe(false)
+    expect(mon.isOverride).toBe(false)
+    expect(mon.routines.map(r => r.id)).toEqual(['r1'])
+    expect(mon.cardioPlans.map(p => p.id)).toEqual(['cp-mon', 'cp-date'])
+    expect(mon.completed.map(c => c.id)).toEqual(['f1', 'c1', 'w1'])
+
+    // Non-rest dayPlan override: overrides week[1] routines and weekday cp-mon, preserves date-specific cp-date
+    const nonRestOv = { ...base, dayPlan: { '2026-11-16': ['r2'] } }
+    const resOv = effectiveDaySessions(nonRestOv, '2026-11-16')
+    expect(resOv.isOverride).toBe(true)
+    expect(resOv.isRest).toBe(false)
+    expect(resOv.routines.map(r => r.id)).toEqual(['r2'])
+    expect(resOv.cardioPlans.map(p => p.id)).toEqual(['cp-date'])
+    expect(resOv.completed).toHaveLength(3)
+
+    // Rest override: suppresses weekly routines & cardioPlans while preserving completed sessions
+    for (const restVal of ['rest', '__rest__', ['rest'], ['__rest__']]) {
+      const restOv = { ...base, dayPlan: { '2026-11-16': restVal } }
+      const resRest = effectiveDaySessions(restOv, '2026-11-16')
+      expect(resRest.isOverride).toBe(true)
+      expect(resRest.isRest).toBe(true)
+      expect(resRest.routines).toEqual([])
+      expect(resRest.cardioPlans).toEqual([])
+      expect(resRest.completed).toHaveLength(3)
+    }
+
+    // Empty dayPlan [] is not an override
+    const emptyOv = { ...base, dayPlan: { '2026-11-16': [] } }
+    const resEmptyOv = effectiveDaySessions(emptyOv, '2026-11-16')
+    expect(resEmptyOv.isOverride).toBe(false)
+    expect(resEmptyOv.routines.map(r => r.id)).toEqual(['r1'])
+
+    // Weekly __rest__
+    const tue = effectiveDaySessions(base, '2026-11-17')
+    expect(tue.isOverride).toBe(false)
+    expect(tue.isRest).toBe(true)
+    expect(tue.routines).toEqual([])
+    expect(tue.cardioPlans).toEqual([])
   })
 })
 

@@ -1953,4 +1953,27 @@ describe('useStore', () => {
       expect(html).not.toContain('var(--cyan)')
     })
   })
+
+  describe('freestyleSessions state & sync defaults (Issue #92)', () => {
+    it('includes freestyleSessions: [] in DEF and defaults missing/null on load and replaceState', async () => {
+      const { DEF, hasData } = await import('./useStore.js')
+      expect(Array.isArray(DEF.freestyleSessions)).toBe(true)
+      expect(DEF.freestyleSessions).toEqual([])
+
+      const store = useStore.getState()
+      store.replaceState({ unit: 'kg', freestyleSessions: null }, false)
+      expect(useStore.getState().S.freestyleSessions).toEqual([])
+
+      const sample = { id: 'fs-store-1', kind: 'yoga', durationMs: 900000, rpe: 5, startTime: '2026-11-12T08:00:00Z' }
+      store.replaceState({ ...DEF, freestyleSessions: [sample] }, false)
+      expect(useStore.getState().S.freestyleSessions).toEqual([sample])
+      expect(hasData(useStore.getState().S)).toBe(true)
+    })
+
+    it('hasData returns true when only freestyleSessions is populated', async () => {
+      const { hasData } = await import('./useStore.js')
+      expect(hasData({ workouts: [], routines: [], bodyweight: [], cardioActivities: [], gear: [], freestyleSessions: [{ id: 'f1' }] })).toBe(true)
+      expect(hasData({ workouts: [], routines: [], bodyweight: [], cardioActivities: [], gear: [], freestyleSessions: [] })).toBe(false)
+    })
+  })
 })

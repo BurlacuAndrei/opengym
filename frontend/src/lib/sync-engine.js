@@ -14,7 +14,7 @@ const defaultCreateLocalBackup = (state, timestamp = Date.now()) => {
 
 const clone = o => (o ? JSON.parse(JSON.stringify(o)) : o)
 
-export const hasData = st => !!(st && ((st.workouts || []).length || (st.routines || []).length || (st.bodyweight || []).length || (st.cardioActivities || []).length || (st.gear || []).length))
+export const hasData = st => !!(st && ((st.workouts || []).length || (st.routines || []).length || (st.bodyweight || []).length || (st.cardioActivities || []).length || (st.freestyleSessions || []).length || (st.gear || []).length))
 
 export function createSyncEngine(options = {}) {
   const {
@@ -138,6 +138,9 @@ export function createSyncEngine(options = {}) {
       } else if (state && (!hasData(S) || ((state._ts || 0) >= (S?._ts || 0) && !dirty))) {
         const active = S?.active
         const next = Object.assign(clone(def), state)
+        if (Array.isArray(def?.freestyleSessions) && !Array.isArray(next.freestyleSessions)) {
+          next.freestyleSessions = []
+        }
         if (active) next.active = active
         persist(next, false)
         if (state._ts) storage.setItem('gym_last_synced_ts', String(state._ts))
