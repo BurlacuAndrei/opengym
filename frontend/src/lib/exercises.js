@@ -6,6 +6,28 @@ export const EXIDX = {}
 EXDB.forEach(e => { EXIDX[e.id] = e })
 export const BODYPARTS = [...new Set(EXDB.map(e => e.bp))].sort()
 
+export const MODALITIES = [
+  { id: 'strength', label: 'Strength', pillar: 'pillar-strength' },
+  { id: 'yoga', label: 'Yoga', pillar: 'pillar-flow' },
+  { id: 'mobility', label: 'Mobility', pillar: 'pillar-flow' },
+  { id: 'cardio', label: 'HIIT / Cardio', pillar: 'pillar-cardio' }
+]
+
+export function exerciseModality(ex) {
+  if (!ex) return 'strength'
+  if (ex.cat === 'yoga') return 'yoga'
+  if (ex.cat === 'stretching') return 'mobility'
+  if (ex.cat === 'cardio' || ex.cat === 'plyometrics' || ex.bp === 'cardio') return 'cardio'
+  return 'strength'
+}
+
+export function exercisePillarClass(ex) {
+  const m = exerciseModality(ex)
+  if (m === 'yoga' || m === 'mobility') return 'pillar-flow'
+  if (m === 'cardio') return 'pillar-cardio'
+  return 'pillar-strength'
+}
+
 // Equipment options present in a given list of exercises, most common first (issue #6).
 // Deriving them from the *already filtered* list keeps the chip row short and means
 // every body-part × equipment combination on screen has results behind it.

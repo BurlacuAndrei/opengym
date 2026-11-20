@@ -12,7 +12,8 @@ import {
   getGearWearPercent,
   addGear,
   updateGear,
-  retireGear
+  retireGear,
+  setDefaultGear
 } from '../lib/gear.js'
 import { fmtDist, formatDistance } from '../lib/cardio-format.js'
 
@@ -20,7 +21,7 @@ import { fmtDist, formatDistance } from '../lib/cardio-format.js'
  * GearManager component for managing gear list, viewing wear percentage
  * progress bar, adding/retiring gear. (Issue #54)
  */
-export default function GearManager({ close, gear: propGear, unit: propUnit }) {
+export default function GearManager({ close, gear: propGear, unit: propUnit, inline = false }) {
   const storeS = useStore?.getState?.()?.S
   const hookS = typeof useStore === 'function' ? useStore(s => s.S) : null
   const S = hookS || storeS || {}
@@ -101,6 +102,10 @@ export default function GearManager({ close, gear: propGear, unit: propUnit }) {
     updateGear(id, { isRetired: false })
   }
 
+  const handleSetDefault = id => {
+    setDefaultGear(id)
+  }
+
   const isImperial = unit === 'lb' || unit === 'lbs'
   const defaultThresholdFormatted =
     type === 'bike'
@@ -110,24 +115,26 @@ export default function GearManager({ close, gear: propGear, unit: propUnit }) {
   const displayedGear = tab === 'active' ? activeGear : retiredGear
 
   return (
-    <div className="gear-manager" style={{ padding: '16px', maxWidth: 600, margin: '0 auto' }}>
+    <div className="gear-manager" style={inline ? { padding: '0' } : { padding: '16px', maxWidth: 600, margin: '0 auto' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Icon name="gear" /> {t('Gear Tracker')}
-        </h2>
-        {close && (
-          <button
-            type="button"
-            className="iconbtn"
-            onClick={close}
-            aria-label={t('Close')}
-            style={{ width: 36, height: 36 }}
-          >
-            ✕
-          </button>
-        )}
-      </div>
+      {!inline && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Icon name="gear" /> {t('Gear Tracker')}
+          </h2>
+          {close && (
+            <button
+              type="button"
+              className="iconbtn"
+              onClick={close}
+              aria-label={t('Close')}
+              style={{ width: 36, height: 36 }}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Action / Add button */}
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -311,24 +318,37 @@ export default function GearManager({ close, gear: propGear, unit: propUnit }) {
                     </div>
                   </div>
 
-                  {/* Retire / Reactivate Action */}
-                  {item.isRetired ? (
-                    <Button
-                      variant="plain"
-                      size="small"
-                      onClick={() => handleReactivate(item.id)}
-                    >
-                      {t('Reactivate')}
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="plain"
-                      size="small"
-                      onClick={() => handleRetire(item.id)}
-                    >
-                      {t('Retire')}
-                    </Button>
-                  )}
+                  {/* Retire / Reactivate / Default Action */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {!item.isRetired && (
+                      <Button
+                        variant={item.isDefault ? 'tinted' : 'plain'}
+                        size="small"
+                        aria-pressed={!!item.isDefault}
+                        onClick={() => handleSetDefault(item.id)}
+                      >
+                        <Icon name={item.isDefault ? 'starFill' : 'star'} />
+                        <span>{item.isDefault ? t('Default') : t('Set default')}</span>
+                      </Button>
+                    )}
+                    {item.isRetired ? (
+                      <Button
+                        variant="plain"
+                        size="small"
+                        onClick={() => handleReactivate(item.id)}
+                      >
+                        {t('Reactivate')}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="plain"
+                        size="small"
+                        onClick={() => handleRetire(item.id)}
+                      >
+                        {t('Retire')}
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Progress bar and metrics */}

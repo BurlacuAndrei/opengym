@@ -140,6 +140,7 @@ function Shell() {
               <Route path="/activity/:id" element={<ActivityDetail />} />
               <Route path="/cardio/:id" element={<ActivityDetail />} />
               <Route path="/library" element={<Library />} />
+              <Route path="/exercises" element={<Navigate to="/library" replace />} />
               <Route path="/settings" element={<Settings />} />
               {/* The Coach screens gate themselves on the instance config; the routes exist
                   unconditionally so a deep link from a notification lands somewhere sane

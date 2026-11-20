@@ -11,7 +11,8 @@ import {
   accumulateGearDistance,
   addGear,
   updateGear,
-  retireGear
+  retireGear,
+  setDefaultGear
 } from './gear.js'
 import {
   useStore,
@@ -21,6 +22,7 @@ import {
   addGear as storeAddGear,
   updateGear as storeUpdateGear,
   retireGear as storeRetireGear,
+  setDefaultGear as storeSetDefaultGear,
   accumulateGearDistance as storeAccumulateGearDistance
 } from '../store/useStore.js'
 import GearManager, { openGearManager } from '../components/GearManager.jsx'
@@ -297,6 +299,44 @@ describe('Gear Mileage Tracker (Issue #54)', () => {
       openGearManager()
       expect(openSheetSpy).toHaveBeenCalledTimes(1)
       expect(typeof openSheetSpy.mock.calls[0][0]).toBe('function')
+    })
+
+    it('setDefaultGear scopes default toggle per sport type and GearManager supports inline prop', () => {
+      const s1 = storeAddGear({ id: 's1', name: 'Pegasus 40', type: 'shoe' })
+      const s2 = storeAddGear({ id: 's2', name: 'Vaporfly 3', type: 'shoe' })
+      const b1 = storeAddGear({ id: 'b1', name: 'Canyon Endurace', type: 'bike' })
+
+      expect(s1.isDefault).toBe(false)
+
+      // Set shoe s1 as default
+      storeSetDefaultGear('s1')
+      expect(useStore.getState().S.gear.find(g => g.id === 's1').isDefault).toBe(true)
+
+      // Set bike b1 as default -> s1 remains default shoe
+      storeSetDefaultGear('b1')
+      expect(useStore.getState().S.gear.find(g => g.id === 's1').isDefault).toBe(true)
+      expect(useStore.getState().S.gear.find(g => g.id === 'b1').isDefault).toBe(true)
+
+      // Set shoe s2 as default -> clears s1 default, keeps b1 default
+      storeSetDefaultGear('s2')
+      expect(useStore.getState().S.gear.find(g => g.id === 's1').isDefault).toBe(false)
+      expect(useStore.getState().S.gear.find(g => g.id === 's2').isDefault).toBe(true)
+      expect(useStore.getState().S.gear.find(g => g.id === 'b1').isDefault).toBe(true)
+
+      // Retiring s2 clears its isDefault flag
+      storeRetireGear('s2')
+      expect(useStore.getState().S.gear.find(g => g.id === 's2').isDefault).toBe(false)
+
+      const inlineHtml = renderToStaticMarkup(
+        React.createElement(GearManager, {
+          gear: useStore.getState().S.gear,
+          unit: 'kg',
+          inline: true
+        })
+      )
+      expect(inlineHtml).not.toContain('Gear Tracker')
+      expect(inlineHtml).toContain('Default')
+      expect(inlineHtml).toContain('Set default')
     })
   })
 })

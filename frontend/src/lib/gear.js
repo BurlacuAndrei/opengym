@@ -48,6 +48,7 @@ export function normalizeGearItem(data = {}) {
     model: data.model != null ? String(data.model).trim() : '',
     distanceM,
     maxDistanceM,
+    isDefault: Boolean(data.isDefault),
     isRetired: Boolean(data.isRetired),
     createdAt: data.createdAt || new Date().toISOString()
   }
@@ -309,5 +310,121 @@ export function updateGear(id, patch = {}, set, get) {
  * Signature: retireGear(id, set, get)
  */
 export function retireGear(id, set, get) {
-  return updateGear(id, { isRetired: true }, set, get)
+  return updateGear(id, { isRetired: true, isDefault: false }, set, get)
+}
+
+/**
+ * Sets or toggles default gear scoped per sport type ('shoe' | 'bike').
+ * Setting a default shoe clears previous default shoe without touching bikes.
+ * If the target gear is already isDefault, toggles it off unless forceOn is true.
+ * Signature: setDefaultGear(id, set, get)
+ */
+export function setDefaultGear(id, set, get) {
+  // Support setDefaultGear(state, id)
+  if (typeof id === 'object' && id !== null && typeof set === 'string') {
+    const state = id
+    const targetId = set
+    const list = state.S?.gear || state.gear || (Array.isArray(state) ? state : null)
+    if (!list) return null
+    const target = list.find(g => g.id === targetId)
+    if (!target) return null
+    const nextVal = !target.isDefault
+    const targetType = target.type === 'bike' ? 'bike' : 'shoe'
+    let updated = null
+    list.forEach((g, idx) => {
+      const gType = g.type === 'bike' ? 'bike' : 'shoe'
+      if (g.id === targetId) {
+        list[idx] = { ...g, isDefault: nextVal }
+        updated = list[idx]
+      } else if (nextVal && gType === targetType && g.isDefault) {
+        list[idx] = { ...g, isDefault: false }
+      }
+    })
+    return updated
+  }
+
+  if (!id) return null
+  let updated = null
+
+  if (!set && !get && _store) {
+    if (typeof _store.getState().setDefaultGear === 'function') {
+      return _store.getState().setDefaultGear(id)
+    }
+    return setDefaultGear(id, _store.setState, _store.getState)
+  }
+
+  if (get && typeof get === 'function') {
+    const st = get()
+    if (typeof st?.update === 'function') {
+      st.update(s => {
+        if (!Array.isArray(s.gear)) s.gear = []
+        const target = s.gear.find(g => g.id === id)
+        if (!target) return
+        const nextVal = !target.isDefault
+        const targetType = target.type === 'bike' ? 'bike' : 'shoe'
+        s.gear = s.gear.map(g => {
+          const gType = g.type === 'bike' ? 'bike' : 'shoe'
+          if (g.id === id) {
+            updated = { ...g, isDefault: nextVal }
+            return updated
+          }
+          if (nextVal && gType === targetType && g.isDefault) {
+            return { ...g, isDefault: false }
+          }
+          return g
+        })
+      })
+      return updated
+    }
+
+    if (typeof set === 'function') {
+      const S = st?.S ? st.S : st
+      const rawList = Array.isArray(S?.gear) ? S.gear : []
+      const target = rawList.find(g => g.id === id)
+      if (!target) return null
+      const nextVal = !target.isDefault
+      const targetType = target.type === 'bike' ? 'bike' : 'shoe'
+      const list = rawList.map(g => {
+        const gType = g.type === 'bike' ? 'bike' : 'shoe'
+        if (g.id === id) {
+          updated = { ...g, isDefault: nextVal }
+          return updated
+        }
+        if (nextVal && gType === targetType && g.isDefault) {
+          return { ...g, isDefault: false }
+        }
+        return g
+      })
+      if (st?.S) set({ ...st, S: { ...st.S, gear: list } })
+      else set({ ...st, gear: list })
+      return updated
+    }
+  }
+
+  if (typeof set === 'function') {
+    set(state => {
+      const S = state?.S ? state.S : state
+      if (!S || !Array.isArray(S.gear)) return state
+      const target = S.gear.find(g => g.id === id)
+      if (!target) return state
+      const nextVal = !target.isDefault
+      const targetType = target.type === 'bike' ? 'bike' : 'shoe'
+      const list = S.gear.map(g => {
+        const gType = g.type === 'bike' ? 'bike' : 'shoe'
+        if (g.id === id) {
+          updated = { ...g, isDefault: nextVal }
+          return updated
+        }
+        if (nextVal && gType === targetType && g.isDefault) {
+          return { ...g, isDefault: false }
+        }
+        return g
+      })
+      if (state?.S) return { ...state, S: { ...state.S, gear: list } }
+      return { ...state, gear: list }
+    })
+    return updated
+  }
+
+  return updated
 }

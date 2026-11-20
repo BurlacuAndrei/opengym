@@ -18,6 +18,7 @@ import {
   addGear as libAddGear,
   updateGear as libUpdateGear,
   retireGear as libRetireGear,
+  setDefaultGear as libSetDefaultGear,
   accumulateGearDistance as libAccumulateGearDistance,
   setGearStore
 } from '../lib/gear.js'
@@ -388,6 +389,9 @@ export const useStore = create((set, get) => {
     retireGear(id) {
       return libRetireGear(id, set, get)
     },
+    setDefaultGear(id) {
+      return libSetDefaultGear(id, set, get)
+    },
     accumulateGearDistance(gearId, distanceM) {
       return libAccumulateGearDistance(gearId, distanceM, set, get)
     },
@@ -607,6 +611,7 @@ setGearStore(useStore)
 export const addGear = (gear) => useStore.getState().addGear(gear)
 export const updateGear = (id, patch) => useStore.getState().updateGear(id, patch)
 export const retireGear = (id) => useStore.getState().retireGear(id)
+export const setDefaultGear = (id) => useStore.getState().setDefaultGear(id)
 export const accumulateGearDistance = (gearId, distanceM) => useStore.getState().accumulateGearDistance(gearId, distanceM)
 export { ROUTINE_KINDS, DEFAULT_ROUTINE_KIND, getRoutineKind, getRoutineRestSec, normalizeRoutine } from '../lib/routine-kind.js'
 export const getRoutineKindById = (id) => useStore.getState().getRoutineKind(id)
