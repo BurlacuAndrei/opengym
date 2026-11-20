@@ -255,6 +255,26 @@ describe('Freestyle Timed Session Logger (Issue #70)', () => {
       expect(remaining).toHaveLength(1)
       expect(remaining[0].id).toBe(s2.id)
     })
+
+    it('preserves optional routineId and name in createFreestyleSession and logFreestyleSession (Issue #93)', () => {
+      const plain = createFreestyleSession({ kind: 'hiit', durationMs: 600000, rpe: 7 })
+      expect('routineId' in plain).toBe(false)
+      expect('name' in plain).toBe(false)
+
+      const logged = logFreestyleSession({
+        kind: 'yoga',
+        durationMs: 1200000,
+        rpe: 5,
+        routineId: 'r-yoga-1',
+        name: 'Morning Yoga Flow'
+      }, useStore)
+      expect(logged.routineId).toBe('r-yoga-1')
+      expect(logged.name).toBe('Morning Yoga Flow')
+
+      const stored = getFreestyleSessions(useStore)
+      expect(stored[0].routineId).toBe('r-yoga-1')
+      expect(stored[0].name).toBe('Morning Yoga Flow')
+    })
   })
 
   describe('FreestyleLoggerSheet Component', () => {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import Icon from '../components/Icon.jsx'
 import { Button } from '../components/ui.jsx'
@@ -110,8 +110,10 @@ export default function RecordingView({
   intervalRunner = null,
 }) {
   let navigate = () => {}
+  let location = null
   try {
     navigate = useNavigate()
+    location = useLocation()
   } catch {
     // Router context optional for testing/embedding
   }
@@ -138,8 +140,14 @@ export default function RecordingView({
   const [recState, setRecState] = useState(() => rec.getState())
   const [liveStats, setLiveStats] = useState(() => rec.getLiveStats())
   const [points, setPoints] = useState(() => (rec.points ? [...rec.points] : []))
+  const routeActivityType = location?.state?.activityType
+  const validRouteType = ['run', 'ride', 'walk', 'hike'].includes(routeActivityType)
+    ? routeActivityType
+    : null
   const [selectedType, setSelectedType] = useState(
-    rec.activityType || initialActivityType || 'run'
+    recState?.status !== RECORDING_STATUS.IDLE
+      ? (recState?.activityType || 'run')
+      : (validRouteType || initialActivityType || recState?.activityType || 'run')
   )
   const [finalizedActivity, setFinalizedActivity] = useState(null)
   const [isFinishing, setIsFinishing] = useState(false)
@@ -151,6 +159,13 @@ export default function RecordingView({
 
   // Wake lock keeps the display awake while actively recording
   useWakeLock(recState?.status === RECORDING_STATUS.RECORDING)
+
+  // Sync route state activityType when idle
+  useEffect(() => {
+    if (recState?.status === RECORDING_STATUS.IDLE && validRouteType) {
+      setSelectedType(validRouteType)
+    }
+  }, [validRouteType, recState?.status])
 
   // Subscribe to recorder state changes
   useEffect(() => {
@@ -197,7 +212,10 @@ export default function RecordingView({
   }, [])
 
   // Activity type and status derived values
-  const activityType = recState?.activityType || selectedType || 'run'
+  const activityType =
+    recState?.status !== RECORDING_STATUS.IDLE
+      ? (recState?.activityType || selectedType || 'run')
+      : (selectedType || 'run')
   const isRide = activityType === 'ride'
   const isRecording = recState?.status === RECORDING_STATUS.RECORDING
   const isPaused = recState?.status === RECORDING_STATUS.PAUSED

@@ -9,7 +9,6 @@ import { passkeyLogin } from './lib/api.js'
 import { setNav } from './lib/nav.js'
 import { applyTheme } from './lib/theme.js'
 import { useWakeLock } from './lib/wakelock.js'
-import { startFlow } from './sheets.jsx'
 import Icon from './components/Icon.jsx'
 import TabBar from './components/TabBar.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
@@ -31,6 +30,7 @@ import CoachIntake from './views/CoachIntake.jsx'
 import CoachProposal from './views/CoachProposal.jsx'
 import RecordingView from './views/RecordingView.jsx'
 import ActivityDetail from './views/ActivityDetail.jsx'
+import FlowPlayer from './views/FlowPlayer.jsx'
 
 bindUI(useUI)   // lets the shared controls open sheets without importing the store at module scope
 
@@ -133,6 +133,7 @@ function Shell() {
               <Route path="/plan" element={<Plan />} />
               <Route path="/plan/r/:id" element={<RoutineEdit />} />
               <Route path="/workout" element={<Workout />} />
+              <Route path="/flow/:id" element={<FlowPlayer />} />
               <Route path="/record" element={<RecordingView />} />
               <Route path="/stats" element={<Stats />} />
               <Route path="/history" element={<History />} />
@@ -152,7 +153,7 @@ function Shell() {
           )}
         </ErrorBoundary>
       </div>
-      <TabBar onStart={startFlow} />
+      <TabBar />
       <RestTimer />
       <Modals />
       <Toast />

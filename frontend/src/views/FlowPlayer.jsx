@@ -1,7 +1,13 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
-import { createFlowPlayer, isFlowRoutine } from '../lib/flow-player.js'
+import {
+  createFlowPlayer,
+  startActiveFlow,
+  getActiveFlow,
+  clearActiveFlow,
+} from '../lib/flow-player.js'
+import { logFreestyleSession, calculateFreestyleLoad } from '../lib/freestyle-session.js'
 import { ROUTINE_KIND_LABELS, ROUTINE_KIND_ICONS, getRoutineKind } from '../lib/routine-kind.js'
 import { useWakeLock } from '../lib/wakelock.js'
 import { t } from '../lib/i18n.js'
@@ -10,44 +16,83 @@ import Media from '../components/Media.jsx'
 import { Button } from '../components/ui.jsx'
 
 /**
- * Custom hook to bind FlowPlayer engine to React lifecycle.
+ * Custom hook to bind FlowPlayer engine to React lifecycle via the shared active-flow controller.
  *
  * @param {Object} routine - Routine to play
  * @param {Object} [options={}] - Player options
- * @returns {{ state: Object, player: Object }}
+ * @returns {{ state: Object, player: Object, startedAtRef: Object }}
  */
 export function useFlowPlayer(routine, options = {}) {
   const S = useStore(s => s.S)
   const voiceCues = options.voiceCues !== undefined ? options.voiceCues : S.voiceCues !== false
+  const playerRef = useRef(null)
+  const startedAtRef = useRef(null)
+  const routineRef = useRef(routine)
+  routineRef.current = routine
+  const optionsRef = useRef(options)
+  optionsRef.current = { ...options, voiceCues }
+  const routineId = routine?.id ?? null
+  const hasExercises = Boolean(routine && Array.isArray(routine.ex) && routine.ex.length > 0)
+  const completedRef = useRef(false)
+  const activeRoutineIdRef = useRef(routineId)
+
+  if (activeRoutineIdRef.current !== routineId) {
+    activeRoutineIdRef.current = routineId
+    completedRef.current = false
+  }
+
   const [state, setState] = useState(() => {
-    const p = createFlowPlayer(routine, { ...options, voiceCues })
+    const active = getActiveFlow()
+    if (
+      active &&
+      routine &&
+      ((active.routineId && active.routineId === routine.id) ||
+        (!active.routineId && active.routine === routine))
+    ) {
+      playerRef.current = active.player
+      startedAtRef.current = active.startedAt
+      return active.player.getState()
+    }
+    const p = createFlowPlayer(routine, { ...options, voiceCues, autoStart: false })
     return p.getState()
   })
 
-  const playerRef = useRef(null)
-
   useEffect(() => {
-    const p = createFlowPlayer(routine, {
-      ...options,
-      voiceCues,
-      autoStart: options.autoStart !== false,
+    const curRoutine = routineRef.current
+    if (!curRoutine || !Array.isArray(curRoutine.ex) || curRoutine.ex.length === 0) {
+      playerRef.current = null
+      return
+    }
+    if (completedRef.current || optionsRef.current.completed) {
+      return
+    }
+    const opts = optionsRef.current
+    const flow = startActiveFlow(curRoutine, {
+      ...opts,
+      autoStart: opts.autoStart !== false,
     })
-    playerRef.current = p
-    setState(p.getState())
+    if (!flow) return
+    playerRef.current = flow.player
+    startedAtRef.current = flow.startedAt
+    setState(flow.player.getState())
 
-    const unsubscribe = p.subscribe(updated => {
+    const unsubscribe = flow.player.subscribe(updated => {
+      if (updated.isCompleted) {
+        completedRef.current = true
+      }
       setState(updated)
     })
 
     return () => {
       unsubscribe()
-      p.destroy()
     }
-  }, [routine, voiceCues])
+  }, [routineId, hasExercises])
 
   return {
     state,
     player: playerRef.current,
+    playerRef,
+    startedAtRef,
   }
 }
 
@@ -62,6 +107,23 @@ function formatTime(seconds) {
 }
 
 /**
+ * Persists a completed Flow Session into S.freestyleSessions and clears active flow.
+ */
+export function persistFlowCompletion({ routine, kind, totalElapsed = 0, rpe = 6, startedAt } = {}) {
+  const durationMs = Math.max(1000, Math.round((totalElapsed || 0) * 1000))
+  const saved = logFreestyleSession({
+    kind,
+    durationMs,
+    rpe,
+    routineId: routine?.id || undefined,
+    name: routine?.name || undefined,
+    startTime: new Date(startedAt || Date.now()).toISOString(),
+  })
+  clearActiveFlow()
+  return saved
+}
+
+/**
  * FlowPlayer component for HIIT, Yoga, and Mobility sessions.
  */
 export default function FlowPlayer({ routine: propRoutine, onFinish, onClose }) {
@@ -70,11 +132,16 @@ export default function FlowPlayer({ routine: propRoutine, onFinish, onClose }) 
   const location = useLocation()
   const S = useStore(s => s.S)
 
-  // Resolve routine from props, location state, or store
+  // Resolve routine from props, location state, store, or active flow
   const routine = useMemo(() => {
     if (propRoutine) return propRoutine
     if (location.state?.routine) return location.state.routine
-    if (id) return S.routines.find(r => r.id === id)
+    if (id) {
+      const found = S.routines.find(r => r.id === id)
+      if (found) return found
+      const active = getActiveFlow()
+      if (active?.routineId === id) return active.routine
+    }
     return null
   }, [propRoutine, location.state, id, S.routines])
 
@@ -82,29 +149,75 @@ export default function FlowPlayer({ routine: propRoutine, onFinish, onClose }) 
   const kindLabel = ROUTINE_KIND_LABELS[kind] || 'Flow'
   const kindIcon = ROUTINE_KIND_ICONS[kind] || 'sparkles'
 
+  const routineId = routine?.id ?? null
+  const persistedPlayerRef = useRef(null)
+  const [completedSummary, setCompletedSummary] = useState(null)
+  const activeCompletedSummary =
+    completedSummary && completedSummary.routineId === routineId ? completedSummary : null
+  const [rpe, setRpe] = useState(6)
+
+  const { state, player, playerRef, startedAtRef } = useFlowPlayer(routine, {
+    autoStart: true,
+    voiceCues: S.voiceCues !== false,
+    completed: Boolean(activeCompletedSummary),
+  })
+
+  useEffect(() => {
+    if (
+      !state.isCompleted ||
+      !routine?.ex?.length ||
+      !playerRef.current ||
+      persistedPlayerRef.current === playerRef.current
+    ) {
+      return
+    }
+    persistedPlayerRef.current = playerRef.current
+    const saved = persistFlowCompletion({
+      routine,
+      kind,
+      totalElapsed: state.totalElapsed,
+      rpe,
+      startedAt: startedAtRef.current,
+    })
+    setCompletedSummary({
+      routineId,
+      sessionId: saved.id,
+      totalMoves: state.totalMoves,
+      totalElapsed: state.totalElapsed,
+      durationMs: saved.durationMs,
+    })
+  }, [state.isCompleted, state.totalMoves, state.totalElapsed, routine, routineId, kind, rpe, playerRef, startedAtRef])
+
+  const handleRpeChange = useCallback(val => {
+    setRpe(val)
+    if (activeCompletedSummary?.sessionId) {
+      useStore.getState().update(s => {
+        const rec = (s.freestyleSessions || []).find(x => x.id === activeCompletedSummary.sessionId)
+        if (rec) {
+          rec.rpe = val
+          rec.load = calculateFreestyleLoad({ durationMs: rec.durationMs, rpe: val })
+        }
+      })
+    }
+  }, [activeCompletedSummary])
+
   const handleFinish = useCallback(() => {
+    clearActiveFlow()
     if (onFinish) {
       onFinish()
     } else {
-      nav(-1)
+      nav('/home')
     }
   }, [onFinish, nav])
 
   const handleClose = useCallback(() => {
+    clearActiveFlow()
     if (onClose) {
       onClose()
     } else {
-      nav(-1)
+      nav('/home')
     }
   }, [onClose, nav])
-
-  const { state, player } = useFlowPlayer(routine, {
-    autoStart: true,
-    voiceCues: S.voiceCues !== false,
-    onComplete: () => {
-      // Flow completed
-    },
-  })
 
   useWakeLock(state.isPlaying)
 
@@ -132,16 +245,40 @@ export default function FlowPlayer({ routine: propRoutine, onFinish, onClose }) 
     totalElapsed,
   } = state
 
-  if (isCompleted) {
+  if (activeCompletedSummary || isCompleted) {
+    const doneMoves = activeCompletedSummary?.totalMoves ?? totalMoves
+    const doneElapsed = activeCompletedSummary?.totalElapsed ?? totalElapsed
     return (
       <div className="narrow" style={{ padding: '32px 16px', textAlign: 'center' }}>
         <div style={{ color: 'var(--acc)', fontSize: 56, marginBottom: 16 }}>
           <Icon name="checkCircle" />
         </div>
         <h1>{t('Flow complete!')}</h1>
-        <p className="dim" style={{ margin: '8px 0 24px', fontSize: 16 }}>
-          {t('Completed {0} moves in {1}.', totalMoves, formatTime(totalElapsed))}
+        <p className="dim" style={{ margin: '8px 0 20px', fontSize: 16 }}>
+          {t('Completed {0} moves in {1}.', doneMoves, formatTime(doneElapsed))}
         </p>
+        {activeCompletedSummary && (
+          <div style={{ marginBottom: 24, textAlign: 'left' }}>
+            <div className="row between" style={{ marginBottom: 8 }}>
+              <label className="muted small">{t('Rate of Perceived Exertion (sRPE 1-10)')}</label>
+              <span className="small accent" style={{ fontWeight: 600 }}>{rpe}/10</span>
+            </div>
+            <div className="chips" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center' }}>
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(val => (
+                <button
+                  key={val}
+                  type="button"
+                  className={`chip ${rpe === val ? 'on' : ''}`}
+                  style={{ minWidth: 32, textAlign: 'center' }}
+                  onClick={() => handleRpeChange(val)}
+                  data-testid={`flow-rpe-chip-${val}`}
+                >
+                  {val}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <Button variant="primary" onClick={handleFinish}>{t('Done')}</Button>
       </div>
     )

@@ -1975,5 +1975,24 @@ describe('useStore', () => {
       expect(hasData({ workouts: [], routines: [], bodyweight: [], cardioActivities: [], gear: [], freestyleSessions: [{ id: 'f1' }] })).toBe(true)
       expect(hasData({ workouts: [], routines: [], bodyweight: [], cardioActivities: [], gear: [], freestyleSessions: [] })).toBe(false)
     })
+
+    it('preserves routineId and name on freestyleSessions across update and replaceState (Issue #93)', async () => {
+      const { DEF } = await import('./useStore.js')
+      const store = useStore.getState()
+      const entry = {
+        id: 'fs-flow-1',
+        kind: 'mobility',
+        durationMs: 600000,
+        rpe: 5,
+        load: 50,
+        routineId: 'r-mob-1',
+        name: 'Recovery Mobility',
+        startTime: '2026-11-20T08:00:00Z'
+      }
+      store.replaceState({ ...DEF, freestyleSessions: [entry] }, false)
+      const saved = useStore.getState().S.freestyleSessions[0]
+      expect(saved.routineId).toBe('r-mob-1')
+      expect(saved.name).toBe('Recovery Mobility')
+    })
   })
 })

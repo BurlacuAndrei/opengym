@@ -1,27 +1,76 @@
+import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
-import { effectiveRoutine } from '../lib/history.js'
-import { todayISO } from '../lib/format.js'
+import { getCardioRecorder, RECORDING_STATUS } from '../lib/cardio-recording.js'
+import { getActiveFlow, subscribeActiveFlow } from '../lib/flow-player.js'
+import { ROUTINE_KIND_ICONS } from '../lib/routine-kind.js'
+import { openStartHubSheet } from './StartHubSheet.jsx'
 import { t } from '../lib/i18n.js'
 import Icon from './Icon.jsx'
 
-export default function TabBar({ onStart }) {
+export function resolveTabBarResume({ S, cardioState, activeFlow }) {
+  const isWorkoutActive = Boolean(S?.active)
+  const isCardioActive =
+    cardioState?.status === RECORDING_STATUS.RECORDING ||
+    cardioState?.status === RECORDING_STATUS.PAUSED
+  const isFlowActive = Boolean(activeFlow && activeFlow.routineId && !activeFlow.state?.isCompleted)
+
+  if (isWorkoutActive) {
+    return { target: '/workout', icon: 'dumbbell' }
+  }
+  if (isCardioActive) {
+    return {
+      target: '/record',
+      icon: cardioState?.activityType === 'ride' ? 'bike' : 'figureRun',
+    }
+  }
+  if (isFlowActive) {
+    return {
+      target: '/flow/' + activeFlow.routineId,
+      icon: ROUTINE_KIND_ICONS[activeFlow.kind] || 'sparkles',
+    }
+  }
+  return null
+}
+
+export default function TabBar() {
   const nav = useNavigate()
   const loc = useLocation()
   const S = useStore(s => s.S)
   const user = useStore(s => s.user)
   const isGuest = useStore(s => s.isGuest())
+
+  const [cardioState, setCardioState] = useState(() => getCardioRecorder().getState())
+  const [activeFlow, setActiveFlow] = useState(() => getActiveFlow())
+
+  useEffect(() => {
+    const rec = getCardioRecorder()
+    setCardioState(rec.getState())
+    const unsubCardio = rec.subscribe(st => setCardioState({ ...st }))
+    setActiveFlow(getActiveFlow())
+    const unsubFlow = subscribeActiveFlow(flow => setActiveFlow(flow))
+    return () => {
+      if (typeof unsubCardio === 'function') unsubCardio()
+      if (typeof unsubFlow === 'function') unsubFlow()
+    }
+  }, [])
+
   if (!user && !isGuest) return null
   const cur = loc.pathname.split('/')[1] || 'home'
   const on = k => cur === k || (cur === 'history' && k === 'stats') || (cur === 'settings' && k === 'home')
 
-  const startWorkout = () => {
-    if (!S.active) {
-      const r = effectiveRoutine(S, todayISO())
-      if (r && r.ex.length) { onStart(r.id); return }
+  const resume = resolveTabBarResume({ S, cardioState, activeFlow })
+  const resumeTarget = resume?.target || null
+  const resumeIcon = resume?.icon || 'dumbbell'
+
+  const handleCenterClick = () => {
+    if (resumeTarget) {
+      nav(resumeTarget)
+      return
     }
-    nav('/workout')
+    openStartHubSheet()
   }
+
   const Tab = ({ k, icon, to, label }) => (
     <button className={on(k) ? 'on' : ''} onClick={() => nav(to)}>
       <Icon name={icon} /><span>{label}</span>
@@ -32,12 +81,12 @@ export default function TabBar({ onStart }) {
     <nav id="tabbar">
       <Tab k="home" icon="house" to="/home" label={t('Home')} />
       <Tab k="plan" icon="calendar" to="/plan" label={t('Plan')} />
-      <button className={'start' + (S.active ? ' rec' : '')} onClick={startWorkout}>
-        <span className="cir"><Icon name={S.active ? 'play' : 'dumbbell'} /></span>
-        <span>{S.active ? t('Resume') : t('Start')}</span>
+      <button className={'start' + (resumeTarget ? ' rec' : '')} onClick={handleCenterClick}>
+        <span className="cir"><Icon name={resumeTarget ? resumeIcon : 'dumbbell'} /></span>
+        <span>{resumeTarget ? t('Resume') : t('Start')}</span>
       </button>
       <Tab k="stats" icon="chart" to="/stats" label={t('Stats')} />
-      <Tab k="library" icon="list" to="/library" label={t('Exercises')} />
+      <Tab k="library" icon="list" to="/library" label={t('Library')} />
     </nav>
   )
 }

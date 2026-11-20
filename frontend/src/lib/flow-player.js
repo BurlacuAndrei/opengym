@@ -307,3 +307,96 @@ export function createFlowPlayer(routine, options = {}) {
     get moves() { return moves },
   }
 }
+
+/* =========================================================================
+   Shared Active Flow Controller & Subscription (Issue #93)
+   Allows an in-progress Flow Session to survive tab navigation for TabBar Resume.
+   ========================================================================= */
+
+let _activeFlow = null
+const _activeFlowListeners = new Set()
+
+function notifyActiveFlow() {
+  const snapshot = getActiveFlow()
+  _activeFlowListeners.forEach(fn => {
+    try {
+      fn(snapshot)
+    } catch {
+      // ignore subscriber errors
+    }
+  })
+}
+
+export function getActiveFlow() {
+  if (!_activeFlow) return null
+  const state = _activeFlow.player.getState()
+  if (state.isCompleted) return null
+  return {
+    routineId: _activeFlow.routineId,
+    name: _activeFlow.name,
+    kind: _activeFlow.kind,
+    routine: _activeFlow.routine,
+    player: _activeFlow.player,
+    startedAt: _activeFlow.startedAt,
+    state,
+  }
+}
+
+export function clearActiveFlow() {
+  if (!_activeFlow) return
+  const prev = _activeFlow
+  _activeFlow = null
+  if (prev.unsub) prev.unsub()
+  if (prev.player) prev.player.destroy()
+  notifyActiveFlow()
+}
+
+export function startActiveFlow(routine, options = {}) {
+  if (!routine || !Array.isArray(routine.ex) || routine.ex.length === 0) {
+    return null
+  }
+
+  if (
+    !options.forceRestart &&
+    _activeFlow &&
+    ((_activeFlow.routineId && _activeFlow.routineId === routine.id) ||
+      (!_activeFlow.routineId && _activeFlow.routine === routine))
+  ) {
+    const curState = _activeFlow.player.getState()
+    if (!curState.isCompleted) {
+      return getActiveFlow()
+    }
+  }
+
+  if (_activeFlow) {
+    const prev = _activeFlow
+    _activeFlow = null
+    if (prev.unsub) prev.unsub()
+    if (prev.player) prev.player.destroy()
+  }
+
+  const player = createFlowPlayer(routine, {
+    ...options,
+    autoStart: options.autoStart !== false,
+  })
+  const entry = {
+    routineId: routine.id || null,
+    name: routine.name || '',
+    kind: getRoutineKind(routine),
+    routine,
+    player,
+    startedAt: Date.now(),
+    unsub: null,
+  }
+  entry.unsub = player.subscribe(() => {
+    notifyActiveFlow()
+  })
+  _activeFlow = entry
+  notifyActiveFlow()
+  return getActiveFlow()
+}
+
+export function subscribeActiveFlow(fn) {
+  _activeFlowListeners.add(fn)
+  return () => _activeFlowListeners.delete(fn)
+}

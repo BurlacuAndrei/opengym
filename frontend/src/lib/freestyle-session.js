@@ -106,6 +106,12 @@ export function createFreestyleSession(data = {}) {
     startTime,
     createdAt
   }
+  if (data.routineId != null && data.routineId !== '') {
+    session.routineId = String(data.routineId)
+  }
+  if (data.name != null && String(data.name).trim() !== '') {
+    session.name = String(data.name).trim()
+  }
 
   session.load = calculateFreestyleLoad(session)
   return session
