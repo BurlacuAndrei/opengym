@@ -725,4 +725,10 @@ export default {
   'No flow routines yet': 'Henüz akış rutini yok',
   'Create a routine in Plan': 'Planda bir rutin oluştur',
   'Rate of Perceived Exertion (sRPE 1-10)': 'Algılanan Zorluk Derecesi (sRPE 1-10)',
+  '{0} interval': '{0} aralık',
+  '{0} intervals': '{0} aralık',
+  'Structured Intervals': 'Yapılandırılmış Aralıklar',
+  'Build warmup, work, recover, and repeat steps.': 'Isınma, çalışma, dinlenme ve tekrar adımları oluşturun.',
+  'Guided Flow': 'Rehberli Akış',
+  'Cardio Activity': 'Kardiyo Aktivitesi',
 }

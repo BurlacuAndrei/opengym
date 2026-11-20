@@ -20,14 +20,34 @@ import {
 import BodyMap from '../components/BodyMap.jsx'
 import { loadOfRoutine, rankOf, MUSCLE_NAME } from '../lib/muscles.js'
 
+export function deleteRoutineFromState(s, id) {
+  if (!s || typeof s !== 'object') return
+  s.routines = (s.routines || []).filter(x => x.id !== id)
+  for (const sched of [s.week, s.dayPlan]) {
+    if (!sched || typeof sched !== 'object') continue
+    for (const k of Object.keys(sched)) {
+      if (Array.isArray(sched[k])) {
+        sched[k] = sched[k].filter(x => x !== id)
+        if (sched[k].length === 0) delete sched[k]
+      } else if (sched[k] === id) {
+        delete sched[k]
+      }
+    }
+  }
+}
+
 export default function RoutineEdit() {
   const nav = useNavigate()
   const { id } = useParams()
-  const S = useStore(s => s.S)
+  const storeS = useStore(s => s.S)
+  const S = (typeof window === 'undefined' ? useStore.getState().S : storeS) || storeS
   const update = useStore(s => s.update)
   const r = S.routines.find(x => x.id === id)
   useEffect(() => { if (!r) nav('/plan') }, [!!r])
   if (!r) return null
+
+  const kind = getRoutineKind(r)
+  const isGym = kind === 'gym'
 
   const edit = fn => update(s => { fn(s.routines.find(x => x.id === id).ex) })
   const move = (i, dir) => edit(ex => { const j = i + dir; if (j < 0 || j >= ex.length) return;[ex[i], ex[j]] = [ex[j], ex[i]]; cleanupSg(ex) })
@@ -54,8 +74,8 @@ export default function RoutineEdit() {
     </div>
 
     <div className="sect-b" style={{ marginBottom: 16 }}>
-      <SelectRow icon={ROUTINE_KIND_ICONS[getRoutineKind(r)] || 'dumbbell'} title={t('Kind')} sheetTitle={t('Kind')}
-        value={getRoutineKind(r)} onChange={v => update(s => { s.routines.find(x => x.id === id).kind = v })}
+      <SelectRow icon={ROUTINE_KIND_ICONS[kind] || 'dumbbell'} title={t('Kind')} sheetTitle={t('Kind')}
+        value={kind} onChange={v => update(s => { s.routines.find(x => x.id === id).kind = v })}
         options={ROUTINE_KINDS.map(k => ({ value: k, label: t(ROUTINE_KIND_LABELS[k]) }))} />
       <SelectRow icon="timer" iconTint="var(--orange)" title={t('Rest timer')} sheetTitle={t('Rest timer')}
         value={r.restSec || 0} onChange={v => update(s => {
@@ -67,13 +87,13 @@ export default function RoutineEdit() {
           { value: 0, label: t('Default ({0}s)', S.restSec || 90) },
           ...[30, 45, 60, 90, 120, 150, 180].map(v => ({ value: v, label: v + 's' }))
         ]} />
-      <SelectRow icon="chartLine" title={t('Progression')} sheetTitle={t('Progression')}
+      {isGym && <SelectRow icon="chartLine" title={t('Progression')} sheetTitle={t('Progression')}
         value={r.prog || 'linear'} onChange={v => update(s => { s.routines.find(x => x.id === id).prog = v })}
-        options={POLICIES_FOR.reps.map(p => ({ value: p, label: t(POLICY_NAME[p]), subtitle: t(POLICY_DESC[p]) }))} />
+        options={POLICIES_FOR.reps.map(p => ({ value: p, label: t(POLICY_NAME[p]), subtitle: t(POLICY_DESC[p]) }))} />}
     </div>
-    <div className="small dim" style={{ margin: '-10px 2px 16px' }}>
+    {isGym && <div className="small dim" style={{ margin: '-10px 2px 16px' }}>
       {t('Applies to every exercise in this routine that does not set its own rule.')}
-    </div>
+    </div>}
 
     {r.ex.length ? <div className="list">{r.ex.map((e, i) => {
       // An unresolvable id is shown rather than skipped — hiding it left an entry you
@@ -100,7 +120,7 @@ export default function RoutineEdit() {
 
     {/* Coverage of the routine as planned, so a gap shows up while you're building it
         rather than after a month of training around it. */}
-    {r.ex.length > 0 && (() => {
+    {isGym && r.ex.length > 0 && (() => {
       const load = loadOfRoutine(r)
       const { worked } = rankOf(load)
       return <div className="card" style={{ marginTop: 12 }}>
@@ -113,16 +133,12 @@ export default function RoutineEdit() {
     })()}
 
     <div className="small dim row" style={{ margin: '10px 2px', gap: 5 }}><Icon name="link" style={{ fontSize: 13 }} />{t('Tap the link button on an exercise to superset it with the one above — you’ll do them back-to-back.')}</div>
-    <Button variant="primary" onClick={() => exercisePicker(ex => exConfigSheet(ex, null, cfg => edit(x => { x.push({ id: ex.id, ...cfg }) }), null, r))} icon="plus">{t('Add exercise')}</Button>
+    <Button variant="primary" onClick={() => exercisePicker(ex => exConfigSheet(ex, null, cfg => edit(x => { x.push({ id: ex.id, ...cfg }) }), null, r), { kind })} icon="plus">{t('Add exercise')}</Button>
     <div style={{ height: 10 }} />
     <Button variant="danger" onClick={() => confirmSheet({
       title: t('Delete routine?'), message: t('“{0}” and its exercises will be removed.', r.name), confirmText: t('Delete'), danger: true,
       onConfirm: () => {
-        update(s => {
-          s.routines = s.routines.filter(x => x.id !== id)
-          Object.keys(s.week).forEach(k => { if (s.week[k] === id) delete s.week[k] })
-          Object.keys(s.dayPlan).forEach(k => { if (s.dayPlan[k] === id) delete s.dayPlan[k] })
-        })
+        update(s => deleteRoutineFromState(s, id))
         nav('/plan')
       }
     })}>{t('Delete routine')}</Button>

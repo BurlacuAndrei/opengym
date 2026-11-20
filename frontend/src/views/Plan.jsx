@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useStore } from '../store/useStore.js'
+import { useStore, getSessions } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
 import { DAYN, uid, exCount } from '../lib/format.js'
 import { t } from '../lib/i18n.js'
 import { dayAssignSheet, loadStarterPlan, planToolsSheet } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
-import { Button, Segmented } from '../components/ui.jsx'
+import { Button, Segmented, Switch } from '../components/ui.jsx'
+import IntervalEditor from '../components/IntervalEditor.jsx'
+import { cleanIntervalSteps, validateIntervalSteps } from '../lib/interval-editor.js'
 import { glyphOf, DEFAULT_GLYPH } from '../lib/glyphs.js'
 import { coachAvailable } from '../lib/coach.js'
 import { DEMO } from '../lib/demo.js'
@@ -39,8 +41,19 @@ export function CardioPlanSheet({ existing, close }) {
     return String(Math.round(existing.targetDurationMs / 60000))
   })
   const [notes, setNotes] = useState(existing?.notes || '')
+  const [useIntervals, setUseIntervals] = useState(() => Array.isArray(existing?.intervals) && existing.intervals.length > 0)
+  const [intervals, setIntervals] = useState(() => Array.isArray(existing?.intervals) ? existing.intervals : [])
 
   const onSave = () => {
+    const cleanedIntervals = useIntervals ? cleanIntervalSteps(intervals) : []
+    if (useIntervals && cleanedIntervals.length > 0) {
+      const iv = validateIntervalSteps(cleanedIntervals)
+      if (!iv.valid) {
+        useUI.getState().toast(iv.errors[0])
+        return
+      }
+    }
+
     const numDist = parseFloat(distance)
     const targetDistanceM = !isNaN(numDist) && numDist > 0
       ? (imperial ? numDist * 1609.344 : numDist * 1000)
@@ -56,7 +69,8 @@ export function CardioPlanSheet({ existing, close }) {
       day: parseInt(day, 10),
       targetDistanceM,
       targetDurationMs,
-      notes: notes.trim()
+      notes: notes.trim(),
+      intervals: cleanedIntervals
     }
 
     update(s => {
@@ -165,6 +179,24 @@ export function CardioPlanSheet({ existing, close }) {
         />
       </div>
 
+      <div className="row between" style={{ padding: '10px 2px', borderTop: '1px solid var(--sep)', borderBottom: '1px solid var(--sep)', marginBottom: 12, gap: 12 }}>
+        <div>
+          <div className="tt" style={{ fontSize: 15 }}>{t('Structured Intervals')}</div>
+          <div className="small dim">{t('Build warmup, work, recover, and repeat steps.')}</div>
+        </div>
+        <Switch checked={useIntervals} onChange={setUseIntervals} />
+      </div>
+
+      {useIntervals && (
+        <div style={{ marginBottom: 14 }}>
+          <IntervalEditor
+            steps={intervals}
+            onChange={setIntervals}
+            unit={S.unit || 'kg'}
+          />
+        </div>
+      )}
+
       <div className="row" style={{ gap: 8 }}>
         {existing && (
           <Button variant="tinted" icon="trash" onClick={onDelete}>
@@ -221,17 +253,26 @@ export default function Plan() {
       <h4 className="sec">{t('Week schedule')}</h4>
       <div className="list" style={{ display: 'flex', flexDirection: 'column' }}>
         {[1, 2, 3, 4, 5, 6, 0].map(d => {
-          const sessionIds = Array.isArray(S.week?.[d])
-            ? S.week[d]
-            : (S.week?.[d] ? [S.week[d]] : [])
-          const dayRoutines = S.routines.filter(x => sessionIds.includes(x.id) || S.week?.[d] === x.id)
-          const dayCardio = cardioPlans.filter(c => c.day === d || sessionIds.includes(c.id))
-          const hasActivities = dayRoutines.length > 0 || dayCardio.length > 0
+          const rawIds = getSessions(S.week?.[d])
+          const isRest = rawIds.some(id => id === 'rest' || id === '__rest__')
+          const uniqueIds = isRest ? [] : [...new Set(rawIds)]
+          const routineById = new Map(S.routines.map(x => [x.id, x]))
+          const cardioById = new Map(cardioPlans.map(c => [c.id, c]))
+
+          const dayRoutines = uniqueIds.map(id => routineById.get(id)).filter(Boolean)
+          const dayCardioIds = new Set(uniqueIds.filter(id => cardioById.has(id)))
+          if (!isRest) {
+            for (const c of cardioPlans) {
+              if (c.day === d && !dayCardioIds.has(c.id)) dayCardioIds.add(c.id)
+            }
+          }
+          const dayCardio = [...dayCardioIds].map(id => cardioById.get(id)).filter(Boolean)
+          const hasActivities = !isRest && (dayRoutines.length > 0 || dayCardio.length > 0)
 
           return <div key={d} className="item" onClick={() => dayAssignSheet(d)}>
             <div className="grow"><div className="tt">{t(DAYN[d])}</div></div>
             {hasActivities ? (
-              <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              <div className="row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 {dayRoutines.map(r => (
                   <span key={r.id} className="tag acc">
                     <Icon name={glyphOf(r.emoji)} />{r.name}

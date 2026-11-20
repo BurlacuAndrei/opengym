@@ -725,4 +725,10 @@ export default {
   'No flow routines yet': '暂无流训练模板',
   'Create a routine in Plan': '在计划中创建模板',
   'Rate of Perceived Exertion (sRPE 1-10)': '主观疲劳度 (sRPE 1-10)',
+  '{0} interval': '{0} 个间歇',
+  '{0} intervals': '{0} 个间歇',
+  'Structured Intervals': '结构化间歇',
+  'Build warmup, work, recover, and repeat steps.': '创建热身、训练、恢复和重复步骤。',
+  'Guided Flow': '引导流训练',
+  'Cardio Activity': '有氧活动',
 }

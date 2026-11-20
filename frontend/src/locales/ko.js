@@ -725,4 +725,10 @@ export default {
   'No flow routines yet': '아직 플로우 루틴이 없습니다',
   'Create a routine in Plan': '플랜에서 루틴 만들기',
   'Rate of Perceived Exertion (sRPE 1-10)': '운동 자각도 (sRPE 1-10)',
+  '{0} interval': '인터벌 {0}개',
+  '{0} intervals': '인터벌 {0}개',
+  'Structured Intervals': '구조화된 인터벌',
+  'Build warmup, work, recover, and repeat steps.': '워밍업, 작업, 회복 및 반복 단계를 구성합니다.',
+  'Guided Flow': '가이드 플로우',
+  'Cardio Activity': '유산소 활동',
 }

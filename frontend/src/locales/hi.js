@@ -725,4 +725,10 @@ export default {
   'No flow routines yet': 'अभी कोई फ़्लो रूटीन नहीं है',
   'Create a routine in Plan': 'प्लान में रूटीन बनाएं',
   'Rate of Perceived Exertion (sRPE 1-10)': 'अनुभूत प्रयास दर (sRPE 1-10)',
+  '{0} interval': '{0} अंतराल',
+  '{0} intervals': '{0} अंतराल',
+  'Structured Intervals': 'संरचित अंतराल',
+  'Build warmup, work, recover, and repeat steps.': 'वार्मअप, कार्य, रिकवरी और दोहराव चरण बनाएं।',
+  'Guided Flow': 'गाइडेड फ़्लो',
+  'Cardio Activity': 'कार्डियो गतिविधि',
 }

@@ -451,5 +451,148 @@ describe('Manual Cardio Planning & Automatic Activity Linking (Issue #58)', () =
       expect(html).toContain('Run · 5 km · 30 min')
       expect(html).toContain('Completed')
     })
+
+    it('renders Structured Intervals Switch in CardioPlanSheet and IntervalEditor when intervals exist', () => {
+      const createHtml = renderToStaticMarkup(
+        React.createElement(CardioPlanSheet, { close: () => {} })
+      )
+      expect(createHtml).toContain('Structured Intervals')
+      expect(createHtml).not.toContain('data-testid="interval-editor"')
+
+      const existing = createCardioPlan({
+        id: 'cp-intervals',
+        type: 'run',
+        day: 3,
+        intervals: [
+          { type: 'warmup', durationMs: 300000 },
+          { type: 'repeat', count: 4, workStep: { type: 'work', durationMs: 120000 }, recoverStep: { type: 'recover', durationMs: 60000 } }
+        ]
+      })
+      const editHtml = renderToStaticMarkup(
+        React.createElement(CardioPlanSheet, { existing, close: () => {} })
+      )
+      expect(editHtml).toContain('Structured Intervals')
+      expect(editHtml).toContain('data-testid="interval-editor"')
+    })
+
+    it('renders multiple routine + cardio tags and handles rest tokens in Plan weekday rows', () => {
+      useStore.setState({
+        S: {
+          ...JSON.parse(JSON.stringify(DEF)),
+          routines: [
+            { id: 'r-push', name: 'Push', emoji: 'dumbbell', kind: 'gym', ex: [] },
+            { id: 'r-yoga', name: 'Evening Yoga', emoji: 'sparkles', kind: 'yoga', ex: [] }
+          ],
+          cardioPlans: [
+            createCardioPlan({
+              id: 'cp-mon-iv',
+              type: 'run',
+              day: 1,
+              intervals: [{ type: 'work', durationMs: 600000 }]
+            }),
+            createCardioPlan({
+              id: 'cp-tue-ignored',
+              type: 'ride',
+              day: 2,
+              targetDistanceM: 10000
+            })
+          ],
+          week: {
+            1: ['r-push', 'r-yoga', 'cp-mon-iv'],
+            2: ['__rest__'],
+            3: 'r-push'
+          }
+        }
+      })
+
+      const html = renderToStaticMarkup(
+        React.createElement(MemoryRouter, null, React.createElement(Plan))
+      )
+      const weekSection = html.split('Cardio targets')[0]
+      expect(weekSection).toContain('Push')
+      expect(weekSection).toContain('Evening Yoga')
+      expect(weekSection).toContain('1 interval')
+      expect(weekSection).toContain('10m')
+      expect(weekSection).not.toContain('10 km')
+    })
+  })
+
+  describe('Structured Cardio Intervals persistence & formatting (Issue #94)', () => {
+    it('createCardioPlan cleans and persists intervals and defaults to []', () => {
+      const empty = createCardioPlan({ type: 'run' })
+      expect(empty.intervals).toEqual([])
+
+      const withSteps = createCardioPlan({
+        type: 'run',
+        intervals: [
+          { type: 'warmup', durationMs: '300000', notes: '  easy  ' },
+          { type: 'repeat', count: 3.7, workStep: { type: 'work', distanceM: 400 }, recoverStep: { type: 'recover', durationMs: 60000 } }
+        ]
+      })
+      expect(withSteps.intervals).toHaveLength(2)
+      expect(withSteps.intervals[0].durationMs).toBe(300000)
+      expect(withSteps.intervals[0].notes).toBe('easy')
+      expect(withSteps.intervals[1].count).toBe(3)
+      expect(withSteps.intervals[1].workStep.distanceM).toBe(400)
+    })
+
+    it('validateCardioPlan validates intervals via validateIntervalSteps', () => {
+      const validPlan = createCardioPlan({
+        type: 'ride',
+        intervals: [{ type: 'work', durationMs: 180000 }]
+      })
+      expect(validateCardioPlan(validPlan)).toEqual({ valid: true, errors: [] })
+
+      const badSteps = validateCardioPlan({
+        type: 'run',
+        intervals: [{ type: 'work', durationMs: -5 }]
+      })
+      expect(badSteps.valid).toBe(false)
+      expect(badSteps.errors.length).toBeGreaterThan(0)
+
+      const nonArray = validateCardioPlan({ type: 'run', intervals: 'invalid' })
+      expect(nonArray.valid).toBe(false)
+    })
+
+    it('updateCardioPlan updates intervals and cleans scalar week[oldDay] on day move', () => {
+      const state = {
+        week: { 1: 'cp-scalar' },
+        cardioPlans: [createCardioPlan({ id: 'cp-scalar', type: 'run', day: 1 })],
+        cardioActivities: []
+      }
+      updateCardioPlan(state, 'cp-scalar', {
+        day: 4,
+        intervals: [{ type: 'work', durationMs: 240000 }]
+      })
+      expect(state.week[1]).toBeUndefined()
+      expect(state.week[4]).toEqual(['cp-scalar'])
+      expect(state.cardioPlans[0].intervals).toHaveLength(1)
+      expect(state.cardioPlans[0].intervals[0].durationMs).toBe(240000)
+    })
+
+    it('formatCardioTarget formats interval summary without steady-state distance/duration', () => {
+      const durPlan = {
+        type: 'run',
+        intervals: [
+          { type: 'warmup', durationMs: 300000 },
+          { type: 'repeat', count: 4, workStep: { type: 'work', durationMs: 120000 }, recoverStep: { type: 'recover', durationMs: 60000 } }
+        ]
+      }
+      expect(formatCardioTarget(durPlan, 'kg')).toBe('Run · 9 intervals · 17m')
+
+      const distPlan = {
+        type: 'ride',
+        intervals: [{ type: 'work', distanceM: 2000 }]
+      }
+      expect(formatCardioTarget(distPlan, 'kg')).toBe('Ride · 1 interval · 2 km')
+
+      const combinedPlan = {
+        type: 'run',
+        targetDistanceM: 5000,
+        targetDurationMs: 1800000,
+        intervals: [{ type: 'work', durationMs: 600000 }]
+      }
+      expect(formatCardioTarget(combinedPlan, 'kg')).toBe('Run · 5 km · 30 min · 1 interval')
+    })
   })
 })

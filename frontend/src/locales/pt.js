@@ -725,4 +725,10 @@ export default {
   'No flow routines yet': 'Ainda sem rotinas Flow',
   'Create a routine in Plan': 'Criar uma rotina no Plano',
   'Rate of Perceived Exertion (sRPE 1-10)': 'Perceção de esforço (sRPE 1-10)',
+  '{0} interval': '{0} intervalo',
+  '{0} intervals': '{0} intervalos',
+  'Structured Intervals': 'Intervalos estruturados',
+  'Build warmup, work, recover, and repeat steps.': 'Cria etapas de aquecimento, trabalho, recuperação e repetição.',
+  'Guided Flow': 'Flow guiado',
+  'Cardio Activity': 'Atividade cardio',
 }

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { useStore } from './store/useStore.js'
+import { useStore, getSessions } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
 import { EXDB, EXIDX, BODYPARTS, isCardio, allExercises, equipmentOf } from './lib/exercises.js'
 import { fmtDate, fmtNum, fmtVol, fmtDur, durPart, todayISO, uid, exCount, DAYN, MONTHS_LONG, ACCENTS } from './lib/format.js'
-import { lastEntryFor, bestWeightFor, buildSets, effectiveRoutineId, workoutVolume, setsDone, setsDoneActive, lastBW, supersetUnits, unitOf, setLabel, defaultConfig, cleanupSg, modeOf, effortOf } from './lib/history.js'
+import { lastEntryFor, bestWeightFor, buildSets, effectiveRoutineId, effectiveDaySessions, workoutVolume, setsDone, setsDoneActive, lastBW, supersetUnits, unitOf, setLabel, defaultConfig, cleanupSg, modeOf, effortOf } from './lib/history.js'
 import { beep, vibrate } from './lib/sound.js'
 import { t, instrFor, getLang, INSTR_LANGS } from './lib/i18n.js'
 import { nav } from './lib/nav.js'
@@ -21,6 +21,8 @@ import { estimate1RM, best1RM, is1RMRecord, REP_CAP } from './lib/onerm.js'
 import { nextPrescription, applyPrescription, policyFor, defaultIncrement, POLICIES_FOR, POLICY_NAME, POLICY_DESC } from './lib/progression.js'
 import { MOBILE, shareExport } from './lib/mobile.js'
 import { isFlowRoutine } from './lib/flow-player.js'
+import { getRoutineKind, ROUTINE_KIND_LABELS } from './lib/routine-kind.js'
+import { getCardioPlans, formatCardioTarget, autoLinkCardioActivities } from './lib/cardio-plan.js'
 import Calendar from './components/Calendar.jsx'
 
 const S = () => useStore.getState().S
@@ -410,39 +412,57 @@ function usageMap(st) {
   st.workouts.forEach(w => w.entries.forEach(e => { u[e.id] = (u[e.id] || 0) + 1 }))
   return u
 }
-function ExercisePicker({ onPick, close }) {
-  const st = useStore(s => s.S)
+export function matchesKindFilter(ex, kind) {
+  if (!ex || !kind || kind === 'gym') return true
+  if (kind === 'yoga') return ex.cat === 'yoga'
+  if (kind === 'mobility') return ex.cat === 'stretching'
+  if (kind === 'hiit') return ex.cat === 'cardio' || ex.cat === 'plyometrics' || ex.bp === 'cardio'
+  return true
+}
+
+export function ExercisePicker({ onPick, close, kind }) {
+  const storeS = useStore(s => s.S)
+  const st = (typeof window === 'undefined' ? useStore.getState().S : storeS) || storeS
   const usage = usageMap(st)
+  const hasKindFilter = kind === 'yoga' || kind === 'mobility' || kind === 'hiit'
+  const [showAll, setShowAll] = useState(!hasKindFilter)
   const [q, setQ] = useState('')
   const [bp, setBp] = useState('')          // '' = all, '★' = chosen, else a body part
   const [eq, setEq] = useState('')          // '' = any equipment
   const [shown, setShown] = useState(50)
   const ql = q.toLowerCase().trim()
   const all = allExercises(st)
-  let base = all.filter(e =>
-    (bp === '★' ? usage[e.id] : (!bp || e.bp === bp)) &&
+  const scoped = (!showAll && hasKindFilter) ? all.filter(e => matchesKindFilter(e, kind)) : all
+  const bpOpts = (!showAll && hasKindFilter)
+    ? BODYPARTS.filter(b => scoped.some(e => e.bp === b))
+    : BODYPARTS
+  const bpOn = bp === '★' || bpOpts.includes(bp) ? bp : ''
+  let base = scoped.filter(e =>
+    (bpOn === '★' ? usage[e.id] : (!bpOn || e.bp === bpOn)) &&
     (!ql || e.n.toLowerCase().includes(ql) || e.tg.includes(ql) || e.eq.includes(ql) || (e.desc || '').toLowerCase().includes(ql)))
-  if (bp === '★') base = [...base].sort((a, b) => (usage[b.id] - usage[a.id]) || (a.n < b.n ? -1 : 1))
+  if (bpOn === '★') base = [...base].sort((a, b) => (usage[b.id] - usage[a.id]) || (a.n < b.n ? -1 : 1))
   const eqOpts = equipmentOf(base)
   // Drop the equipment filter if the search narrowed it away, so you never hit a dead end.
   const eqOn = eqOpts.includes(eq) ? eq : ''
   const f = eqOn ? base.filter(e => e.eq === eqOn) : base
   const chosenCount = Object.keys(usage).length
+  const kindLabel = hasKindFilter ? t(ROUTINE_KIND_LABELS[kind]) : null
   return <>
     <h3>{t('Add exercise')}</h3>
     <div className="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
-      <input className="input" placeholder={t('Search {0} exercises…', all.length)} value={q} onChange={e => { setQ(e.target.value); setShown(50) }} /></div>
+      <input className="input" placeholder={t('Search {0} exercises…', scoped.length)} value={q} onChange={e => { setQ(e.target.value); setShown(50) }} /></div>
     <div className="chips" style={{ margin: eqOpts.length > 1 ? '10px 0 6px' : '10px 0' }}>
-      {chosenCount > 0 && <button className={'chip' + (bp === '★' ? ' on' : '')} onClick={() => { setBp('★'); setEq(''); setShown(50) }}><Icon name="starFill" style={{ fontSize: 12, display: 'inline-block', marginRight: 4, verticalAlign: '-1px' }} />{t('Chosen')} ({chosenCount})</button>}
-      <button className={'chip nocap' + (!bp ? ' on' : '')} onClick={() => { setBp(''); setEq(''); setShown(50) }}>{t('All')}</button>
-      {BODYPARTS.map(b => <button key={b} className={'chip' + (bp === b ? ' on' : '')} onClick={() => { setBp(b); setEq(''); setShown(50) }}>{t(b)}</button>)}
+      {chosenCount > 0 && <button className={'chip' + (bpOn === '★' ? ' on' : '')} onClick={() => { setBp('★'); setEq(''); setShown(50) }}><Icon name="starFill" style={{ fontSize: 12, display: 'inline-block', marginRight: 4, verticalAlign: '-1px' }} />{t('Chosen')} ({chosenCount})</button>}
+      {hasKindFilter && <button className={'chip' + (!showAll && !bpOn ? ' on' : '')} onClick={() => { setShowAll(false); setBp(''); setEq(''); setShown(50) }}>{kindLabel}</button>}
+      <button className={'chip nocap' + ((hasKindFilter ? showAll && !bpOn : !bpOn) ? ' on' : '')} onClick={() => { setShowAll(true); setBp(''); setEq(''); setShown(50) }}>{t('All')}</button>
+      {bpOpts.map(b => <button key={b} className={'chip' + (bpOn === b ? ' on' : '')} onClick={() => { setBp(b); setEq(''); setShown(50) }}>{t(b)}</button>)}
     </div>
     {eqOpts.length > 1 && <div className="chips" style={{ marginBottom: 10 }}>
       <button className={'chip nocap' + (!eqOn ? ' on' : '')} onClick={() => { setEq(''); setShown(50) }}>{t('Any equipment')}</button>
       {eqOpts.map(x => <button key={x} className={'chip' + (eqOn === x ? ' on' : '')} onClick={() => { setEq(x); setShown(50) }}>{t(x)}</button>)}
     </div>}
     <div className="list">
-      {bp !== '★' && <div className="item" onClick={() => customExSheet(null, ex => onPick(ex), q.trim())}>
+      {bpOn !== '★' && <div className="item" onClick={() => customExSheet(null, ex => onPick(ex), q.trim())}>
         <div className="thumb thumb-x"><Icon name="sparkles" /></div>
         <div className="grow"><div className="tt">{t('Create your own exercise')}</div><div className="ss">{t('name + body part, no animation')}</div></div><Icon name="plus" className="chev" />
       </div>}
@@ -450,18 +470,19 @@ function ExercisePicker({ onPick, close }) {
         <Thumb ex={e} /><div className="grow"><div className="tt capitalize">{e.n}</div><div className="ss capitalize">{t(e.tg || e.bp)} · {t(e.eq)}</div></div>
         {usage[e.id] && <span className="tag acc"><Icon name="starFill" /></span>}<Icon name="plus" className="chev" />
       </div>)}
-      {f.length === 0 && bp === '★' && <div className="empty">{t('Nothing chosen yet — add exercises and they’ll show up here.')}</div>}
+      {f.length === 0 && bpOn === '★' && <div className="empty">{t('Nothing chosen yet — add exercises and they’ll show up here.')}</div>}
     </div>
     {f.length > shown && <><div style={{ height: 8 }} /><Button onClick={() => setShown(s => s + 50)}>{t('Show more')}</Button></>}
   </>
 }
-export const exercisePicker = onPick => ui().openSheet(close => <ExercisePicker onPick={onPick} close={close} />)
+export const exercisePicker = (onPick, opts) => ui().openSheet(close => <ExercisePicker onPick={onPick} kind={opts?.kind} close={close} />)
 
 /* ============================ exercise config ============================ */
 // Progression settings for one exercise (issue #17). Shown inside the config sheet because
 // "how does this lift go up" belongs next to sets and reps, not in a separate screen. Left
 // on "follow the routine" it inherits, so most people never touch it.
 function ProgressionFields({ ex, mode, c, setC, routine, unit }) {
+  if (getRoutineKind(routine) !== 'gym' && mode === 'reps') return null
   const options = POLICIES_FOR[mode] || ['off']
   if (options.length < 2) return null
   const inherited = policyFor({ id: ex.id }, routine, mode)
@@ -484,13 +505,18 @@ function ProgressionFields({ ex, mode, c, setC, routine, unit }) {
   </>
 }
 
-function ExConfig({ ex, existing, onSave, onDelete, close, routine }) {
-  const st = useStore(s => s.S)
-  const cardio = isCardio(ex.id)
-  const [c, setC] = useState(existing || defaultConfig(ex.id))
-  // Cardio keeps its own duration+speed form; the reps/time choice (issue #16) is offered for
-  // everything else, which is where the gap was — planks, hangs, wall sits, loaded carries.
-  const mode = cardio ? 'cardio' : modeOf({ ...c, id: ex.id })
+export function ExConfig({ ex, existing, onSave, onDelete, close, routine }) {
+  const storeS = useStore(s => s.S)
+  const st = (typeof window === 'undefined' ? useStore.getState().S : storeS) || storeS
+  const kind = getRoutineKind(routine)
+  const isGym = kind === 'gym'
+  const [c, setC] = useState(() => existing || (!isGym ? defaultConfig(ex.id, 'time') : defaultConfig(ex.id)))
+  // Cardio keeps its own duration+speed form in gym routines; non-gym routines default to
+  // timed duration even if isCardio(ex.id), while still respecting an existing cardio entry.
+  const mode = (!isGym && (c.mode === 'time' || c.mode === 'reps' || !existing))
+    ? (c.mode || 'time')
+    : (isCardio(ex.id) ? 'cardio' : modeOf({ ...c, id: ex.id }))
+  const cardio = mode === 'cardio'
   // Keep whatever the other mode already had (sets, weight) and fill only what is missing.
   const setMode = m => setC(x => ({ ...defaultConfig(ex.id, m), ...x, mode: m }))
   const save = () => {
@@ -506,7 +532,7 @@ function ExConfig({ ex, existing, onSave, onDelete, close, routine }) {
     else {
       const reps = Math.max(1, Math.round(c.reps) || 10)
       const out = { sets, mode: 'reps', reps, weight: Math.max(0, c.weight || 0), ...prog }
-      if (policyFor({ ...c, id: ex.id }, routine, 'reps') === 'double') out.repsMin = Math.min(reps, Math.max(1, Math.round(c.repsMin) || Math.max(1, reps - 2)))
+      if (isGym && policyFor({ ...c, id: ex.id }, routine, 'reps') === 'double') out.repsMin = Math.min(reps, Math.max(1, Math.round(c.repsMin) || Math.max(1, reps - 2)))
       onSave(out)
     }
   }
@@ -653,44 +679,208 @@ function PlanImport({ bundle, close }) {
 }
 
 /* ============================ day override / assign ============================ */
-function DayOverride({ iso, close }) {
-  const st = useStore(s => s.S)
-  const wd = new Date(iso + 'T12:00:00').getDay()
-  const weeklyR = st.routines.find(r => r.id === st.week[wd])
-  const hasOvr = st.dayPlan[iso] !== undefined
-  const effId = effectiveRoutineId(st, iso)
-  const set = v => {
-    update(s => { if (!v) delete s.dayPlan[iso]; else s.dayPlan[iso] = v })
+const isRestToken = id => id === 'rest' || id === '__rest__'
+
+export function toggleDayAssignSession(s, day, targetId) {
+  if (!s || typeof s !== 'object') return
+  if (!s.week) s.week = {}
+  const raw = getSessions(s.week[day])
+  const wasRest = raw.some(isRestToken)
+  const base = wasRest ? [] : raw.filter(id => !isRestToken(id))
+  const cardioPlans = getCardioPlans(s)
+  const currentSet = new Set(base)
+  if (!wasRest) {
+    for (const cp of cardioPlans) {
+      if (cp.day === day) currentSet.add(cp.id)
+    }
+  }
+
+  const cp = cardioPlans.find(p => p.id === targetId)
+  const next = [...currentSet]
+  const idx = next.indexOf(targetId)
+  if (idx !== -1) {
+    next.splice(idx, 1)
+    if (cp && cp.day === day) cp.day = null
+  } else {
+    next.push(targetId)
+    if (cp) {
+      if (cp.day != null && cp.day !== day) {
+        const oldSessions = getSessions(s.week[cp.day]).filter(id => id !== cp.id)
+        if (oldSessions.length === 0) delete s.week[cp.day]
+        else s.week[cp.day] = oldSessions
+      }
+      cp.day = day
+    }
+  }
+
+  if (next.length === 0) delete s.week[day]
+  else s.week[day] = next
+
+  if (cp) autoLinkCardioActivities(s)
+}
+
+export function clearDayAssignToRest(s, day) {
+  if (!s || typeof s !== 'object') return
+  if (s.week) delete s.week[day]
+  for (const cp of getCardioPlans(s)) {
+    if (cp.day === day) cp.day = null
+  }
+}
+
+export function toggleDayOverrideSession(s, iso, targetId) {
+  if (!s || typeof s !== 'object') return
+  if (!s.dayPlan) s.dayPlan = {}
+  let current
+  if (s.dayPlan[iso] !== undefined) {
+    const raw = getSessions(s.dayPlan[iso])
+    current = raw.some(isRestToken) ? [] : [...new Set(raw)]
+  } else {
+    const eff = effectiveDaySessions(s, iso)
+    current = eff.isRest
+      ? []
+      : [...new Set([...eff.routines.map(r => r.id), ...eff.cardioPlans.map(c => c.id)])]
+  }
+
+  const next = current.includes(targetId)
+    ? current.filter(id => id !== targetId)
+    : [...current, targetId]
+
+  s.dayPlan[iso] = next.length === 0 ? ['__rest__'] : next
+}
+
+export function setDayOverrideRest(s, iso) {
+  if (!s || typeof s !== 'object') return
+  if (!s.dayPlan) s.dayPlan = {}
+  s.dayPlan[iso] = ['__rest__']
+}
+
+export function clearDayOverride(s, iso) {
+  if (!s || typeof s !== 'object' || !s.dayPlan) return
+  delete s.dayPlan[iso]
+}
+
+function SessionGroups({ st, selectedIds, onToggle }) {
+  const routines = Array.isArray(st.routines) ? st.routines : []
+  const strength = routines.filter(r => !isFlowRoutine(r))
+  const flows = routines.filter(r => isFlowRoutine(r))
+  const cardioPlans = getCardioPlans(st)
+
+  return <>
+    {strength.length > 0 && <>
+      <h4 className="sec">{t('Strength')}</h4>
+      <div className="list">
+        {strength.map(r => <div key={r.id} className="item" onClick={() => onToggle(r.id)}>
+          <span className="lrow-i"><Icon name={glyphOf(r.emoji)} /></span>
+          <div className="grow"><div className="tt">{r.name}</div><div className="ss">{exCount(r.ex.length)}</div></div>
+          {selectedIds.has(r.id) && <Icon name="check" className="accent" />}
+        </div>)}
+      </div>
+    </>}
+    {flows.length > 0 && <>
+      <h4 className="sec">{t('Guided Flow')}</h4>
+      <div className="list">
+        {flows.map(r => <div key={r.id} className="item" onClick={() => onToggle(r.id)}>
+          <span className="lrow-i"><Icon name={glyphOf(r.emoji)} /></span>
+          <div className="grow"><div className="tt">{r.name}</div><div className="ss">{t(ROUTINE_KIND_LABELS[getRoutineKind(r)])} · {exCount(r.ex.length)}</div></div>
+          {selectedIds.has(r.id) && <Icon name="check" className="accent" />}
+        </div>)}
+      </div>
+    </>}
+    {cardioPlans.length > 0 && <>
+      <h4 className="sec">{t('Cardio Activity')}</h4>
+      <div className="list">
+        {cardioPlans.map(cp => <div key={cp.id} className="item" onClick={() => onToggle(cp.id)}>
+          <span className="lrow-i"><Icon name={cp.type === 'ride' ? 'bike' : 'figureRun'} /></span>
+          <div className="grow">
+            <div className="tt">{formatCardioTarget(cp, st.unit)}</div>
+            <div className="ss">{cp.day != null ? t(DAYN[cp.day]) : t('Any day')}{cp.notes ? ' · ' + cp.notes : ''}</div>
+          </div>
+          {selectedIds.has(cp.id) && <Icon name="check" className="accent" />}
+        </div>)}
+      </div>
+    </>}
+  </>
+}
+
+export function DayOverride({ iso, close }) {
+  const storeS = useStore(s => s.S)
+  const st = (typeof window === 'undefined' ? useStore.getState().S : storeS) || storeS
+  const weeklyEff = effectiveDaySessions({ ...st, dayPlan: {} }, iso)
+  const weeklyNames = [
+    ...weeklyEff.routines.map(r => r.name),
+    ...weeklyEff.cardioPlans.map(c => formatCardioTarget(c, st.unit))
+  ]
+  const eff = effectiveDaySessions(st, iso)
+  const hasOvr = eff.isOverride
+  const selectedIds = new Set(
+    eff.isRest
+      ? []
+      : [...eff.routines.map(r => r.id), ...eff.cardioPlans.map(c => c.id)]
+  )
+  const toggle = id => update(s => toggleDayOverrideSession(s, iso, id))
+  const setRest = () => {
+    update(s => setDayOverrideRest(s, iso))
     close()
-    toast(v === '' ? t('Back to weekly plan') : v === 'rest' ? t('{0} set to rest', fmtDate(iso)) : t('{0} planned for {1}', (st.routines.find(r => r.id === v) || {}).name, fmtDate(iso)))
+    toast(t('{0} set to rest', fmtDate(iso)))
+  }
+  const resetWeekly = () => {
+    update(s => clearDayOverride(s, iso))
+    close()
+    toast(t('Back to weekly plan'))
   }
   return <>
     <h3>{fmtDate(iso, true)}</h3>
-    <div className="muted small" style={{ marginBottom: 12 }}>{t('Weekly plan:')} {weeklyR ? weeklyR.name : t('Rest')}{hasOvr && <span style={{ color: 'var(--orange)' }}> · {t('changed for this day')}</span>}<br />{t('Sick, missed a day or want a different session? Pick what to train instead.')}</div>
-    <div className="list">
-      {st.routines.map(r => <div key={r.id} className="item" onClick={() => set(r.id)}>
-        <span className="lrow-i"><Icon name={glyphOf(r.emoji)} /></span>
-        <div className="grow"><div className="tt">{r.name}</div><div className="ss">{exCount(r.ex.length)}</div></div>
-        {effId === r.id && <Icon name="check" className="accent" />}</div>)}
-      <div className="item" onClick={() => set('rest')}><span className="lrow-i" style={{ '--tint': 'var(--label-2)' }}><Icon name="moon" /></span><div className="grow"><div className="tt">{t('Rest / skip this day')}</div></div>{effId === null && <Icon name="check" className="accent" />}</div>
-      {hasOvr && <div className="item" onClick={() => set('')}><span className="lrow-i" style={{ '--tint': 'var(--label-2)' }}><Icon name="reset" /></span><div className="grow"><div className="tt">{t('Back to weekly plan')}</div></div></div>}
+    <div className="muted small" style={{ marginBottom: 12 }}>
+      {t('Weekly plan:')} {weeklyNames.length ? weeklyNames.join(' + ') : t('Rest')}
+      {hasOvr && <span style={{ color: 'var(--orange)' }}> · {t('changed for this day')}</span>}
+      <br />{t('Sick, missed a day or want a different session? Pick what to train instead.')}
     </div>
+    <SessionGroups st={st} selectedIds={selectedIds} onToggle={toggle} />
+    <div className="list" style={{ marginTop: 12 }}>
+      <div className="item" onClick={setRest}>
+        <span className="lrow-i" style={{ '--tint': 'var(--label-2)' }}><Icon name="moon" /></span>
+        <div className="grow"><div className="tt">{t('Rest / skip this day')}</div></div>
+        {eff.isRest && <Icon name="check" className="accent" />}
+      </div>
+      {hasOvr && <div className="item" onClick={resetWeekly}>
+        <span className="lrow-i" style={{ '--tint': 'var(--label-2)' }}><Icon name="reset" /></span>
+        <div className="grow"><div className="tt">{t('Back to weekly plan')}</div></div>
+      </div>}
+    </div>
+    <div style={{ height: 12 }} />
+    <Button variant="primary" onClick={close}>{t('Done')}</Button>
   </>
 }
 export const dayOverrideSheet = iso => ui().openSheet(close => <DayOverride iso={iso} close={close} />)
 
-function DayAssign({ day, close }) {
-  const st = useStore(s => s.S)
-  const set = v => { update(s => { if (v) s.week[day] = v; else delete s.week[day] }); close() }
+export function DayAssign({ day, close }) {
+  const storeS = useStore(s => s.S)
+  const st = (typeof window === 'undefined' ? useStore.getState().S : storeS) || storeS
+  const raw = getSessions(st.week?.[day])
+  const isRest = raw.some(isRestToken)
+  const selectedIds = new Set(isRest ? [] : raw)
+  if (!isRest) {
+    for (const cp of getCardioPlans(st)) {
+      if (cp.day === day) selectedIds.add(cp.id)
+    }
+  }
+  const toggle = id => update(s => toggleDayAssignSession(s, day, id))
+  const setRest = () => {
+    update(s => clearDayAssignToRest(s, day))
+    close()
+  }
   return <>
     <h3>{t(DAYN[day])}</h3>
-    <div className="list">
-      <div className="item" onClick={() => set('')}><span className="lrow-i" style={{ '--tint': 'var(--label-2)' }}><Icon name="moon" /></span><div className="grow"><div className="tt">{t('Rest day')}</div></div>{!st.week[day] && <Icon name="check" className="accent" />}</div>
-      {st.routines.map(r => <div key={r.id} className="item" onClick={() => set(r.id)}>
-        <span className="lrow-i"><Icon name={glyphOf(r.emoji)} /></span>
-        <div className="grow"><div className="tt">{r.name}</div><div className="ss">{exCount(r.ex.length)}</div></div>
-        {st.week[day] === r.id && <Icon name="check" className="accent" />}</div>)}
+    <SessionGroups st={st} selectedIds={selectedIds} onToggle={toggle} />
+    <div className="list" style={{ marginTop: 12 }}>
+      <div className="item" onClick={setRest}>
+        <span className="lrow-i" style={{ '--tint': 'var(--label-2)' }}><Icon name="moon" /></span>
+        <div className="grow"><div className="tt">{t('Rest day')}</div></div>
+        {selectedIds.size === 0 && <Icon name="check" className="accent" />}
+      </div>
     </div>
+    <div style={{ height: 12 }} />
+    <Button variant="primary" onClick={close}>{t('Done')}</Button>
   </>
 }
 export const dayAssignSheet = day => ui().openSheet(close => <DayAssign day={day} close={close} />)

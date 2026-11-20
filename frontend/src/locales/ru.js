@@ -725,4 +725,10 @@ export default {
   'No flow routines yet': 'Пока нет Flow-программ',
   'Create a routine in Plan': 'Создать программу в Плане',
   'Rate of Perceived Exertion (sRPE 1-10)': 'Воспринимаемая нагрузка (sRPE 1-10)',
+  '{0} interval': '{0} интервал',
+  '{0} intervals': '{0} интервалов',
+  'Structured Intervals': 'Структурированные интервалы',
+  'Build warmup, work, recover, and repeat steps.': 'Создавайте этапы разминки, работы, восстановления и повторов.',
+  'Guided Flow': 'Управляемый Flow',
+  'Cardio Activity': 'Кардиоактивность',
 }

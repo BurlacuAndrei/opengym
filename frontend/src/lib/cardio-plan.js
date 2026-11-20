@@ -2,6 +2,12 @@ import { uid } from './format.js'
 import { fmtDist, kmToMeters, milesToMeters, isImperial } from './cardio-format.js'
 import { t } from './i18n.js'
 import { useStore } from '../store/useStore.js'
+import {
+  cleanIntervalSteps,
+  validateIntervalSteps,
+  calculateTotalIntervalTarget,
+  formatStepDuration
+} from './interval-editor.js'
 
 export const CARDIO_PLAN_TYPES = ['run', 'ride', 'hike', 'walk']
 
@@ -70,6 +76,7 @@ export function createCardioPlan(input = {}) {
   const date = typeof input.date === 'string' && input.date.length >= 10
     ? input.date.slice(0, 10)
     : null
+  const intervals = Array.isArray(input.intervals) ? cleanIntervalSteps(input.intervals) : []
 
   return {
     id: input.id || ('cardio-plan-' + uid()),
@@ -79,6 +86,7 @@ export function createCardioPlan(input = {}) {
     notes,
     day,
     date,
+    intervals,
     completed: Boolean(input.completed),
     activityId: input.activityId || null,
     completedAt: input.completedAt || null
@@ -123,6 +131,11 @@ export function validateCardioPlan(plan) {
     if (typeof plan.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(plan.date)) {
       errors.push('Date must be in YYYY-MM-DD format')
     }
+  }
+
+  if (plan.intervals != null && (!Array.isArray(plan.intervals) || plan.intervals.length > 0)) {
+    const iv = validateIntervalSteps(plan.intervals)
+    if (!iv.valid) errors.push(...iv.errors)
   }
 
   return {
@@ -364,12 +377,19 @@ export function updateCardioPlan(state, planId, patch = {}) {
     plan.day = patch.day != null && patch.day !== '' ? Number(patch.day) : null
   }
   if (patch.date !== undefined) plan.date = patch.date || null
+  if (patch.intervals !== undefined) {
+    plan.intervals = Array.isArray(patch.intervals) ? cleanIntervalSteps(patch.intervals) : []
+  }
 
   // Re-sync weekly schedule if day changed
   if (plan.day !== oldDay) {
-    if (oldDay != null && state.week && Array.isArray(state.week[oldDay])) {
-      state.week[oldDay] = state.week[oldDay].filter(id => id !== planId)
-      if (state.week[oldDay].length === 0) delete state.week[oldDay]
+    if (oldDay != null && state.week) {
+      if (Array.isArray(state.week[oldDay])) {
+        state.week[oldDay] = state.week[oldDay].filter(id => id !== planId)
+        if (state.week[oldDay].length === 0) delete state.week[oldDay]
+      } else if (state.week[oldDay] === planId) {
+        delete state.week[oldDay]
+      }
     }
     if (plan.day != null) {
       if (!state.week) state.week = {}
@@ -403,6 +423,16 @@ export function formatCardioTarget(plan, unit = 'kg') {
   if (plan.targetDurationMs != null && plan.targetDurationMs > 0) {
     const mins = Math.round(plan.targetDurationMs / 60000)
     parts.push(`${mins} min`)
+  }
+
+  if (Array.isArray(plan.intervals) && plan.intervals.length > 0) {
+    const totals = calculateTotalIntervalTarget(plan.intervals)
+    const stepCount = totals.stepCount || plan.intervals.length
+    parts.push(t(stepCount === 1 ? '{0} interval' : '{0} intervals', stepCount))
+    if (!(plan.targetDistanceM > 0) && !(plan.targetDurationMs > 0)) {
+      if (totals.totalDistanceM > 0) parts.push(fmtDist(totals.totalDistanceM, unit))
+      if (totals.totalDurationMs > 0) parts.push(formatStepDuration(totals.totalDurationMs))
+    }
   }
 
   return parts.join(' · ')
