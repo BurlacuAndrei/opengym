@@ -118,7 +118,7 @@ test('declined changes are carried forward so the Coach does not nag', () => {
 });
 
 test('shared coach exports match server payload interfaces', async () => {
-  const shared = await import('shared/coach');
+  const shared = await import('../../shared/coach/index.js');
   assert.equal(payload.CONTRACT, shared.CONTRACT);
   assert.equal(payload.MAX_WEEKS, shared.MAX_WEEKS);
   assert.equal(payload.MAX_SESSIONS, shared.MAX_SESSIONS);

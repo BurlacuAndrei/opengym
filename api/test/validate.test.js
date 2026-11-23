@@ -173,7 +173,7 @@ test('every allowed change type has a validator that accepts a well-formed insta
 });
 
 test('shared coach exports validation interfaces matching server validate', async () => {
-  const shared = await import('shared/coach');
+  const shared = await import('../../shared/coach/index.js');
   assert.deepEqual(CHANGE_TYPES, shared.CHANGE_TYPES);
   assert.equal(validatePlan, shared.validatePlan);
   assert.equal(validateReview, shared.validateReview);
@@ -230,7 +230,7 @@ test('review validation allows custom exercises matching cust_ prefix or customE
 });
 
 test('mergePlan treats customEx as first-class exercises across review change operations (Issue #50)', async () => {
-  const { mergePlan, canonicalPlan, planHash } = await import('shared/coach');
+  const { mergePlan, canonicalPlan, planHash } = await import('../../shared/coach/index.js');
 
   const plan = JSON.parse(JSON.stringify(PLAN));
   const reviewChanges = [

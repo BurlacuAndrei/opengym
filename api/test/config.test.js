@@ -157,7 +157,7 @@ test('weekly does not fire twice on the same day', () => {
 });
 
 test('shared coach exports isDue matching server cadence', async () => {
-  const shared = await import('shared/coach');
+  const shared = await import('../../shared/coach/index.js');
   assert.equal(cadence.isDue, shared.isDue);
 });
 
