@@ -212,8 +212,11 @@ export async function speakCardioCue(text, options = {}) {
 
   const adapter = options.adapter
   const speakFn = options.speak || (adapter ? (t, o) => adapter.speak(t, o) : defaultSpeak)
+  const duck = options.duck !== undefined
+    ? Boolean(options.duck)
+    : (options.S?.voiceDucking !== false && options.settings?.voiceDucking !== false)
 
-  const cue = await speakFn(text, { duck: true })
+  const cue = await speakFn(text, { duck })
   return { spoken: true, text, cue }
 }
 

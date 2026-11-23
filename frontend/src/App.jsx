@@ -1,14 +1,19 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
 import { bindUI, Button } from './components/ui.jsx'
-import { ACCENTS } from './lib/format.js'
+import { ACCENTS, fmtDur } from './lib/format.js'
 import { t, setLang, useLang } from './lib/i18n.js'
 import { passkeyLogin } from './lib/api.js'
-import { setNav } from './lib/nav.js'
+import { setNav, nav } from './lib/nav.js'
 import { applyTheme } from './lib/theme.js'
 import { useWakeLock } from './lib/wakelock.js'
+import {
+  checkRecoveryLog,
+  finishRecoveredSession,
+  discardRecoveredSession
+} from './lib/cardio-recovery.js'
 import Icon from './components/Icon.jsx'
 import TabBar from './components/TabBar.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
@@ -24,6 +29,7 @@ import Stats from './views/Stats.jsx'
 import History from './views/History.jsx'
 import Library from './views/Library.jsx'
 import Settings from './views/Settings.jsx'
+import PrivacySettings from './views/PrivacySettings.jsx'
 import Admin from './views/Admin.jsx'
 import Coach from './views/Coach.jsx'
 import CoachIntake from './views/CoachIntake.jsx'
@@ -95,6 +101,61 @@ export function syncThemeEffect(theme, accent) {
   }
 }
 
+export async function checkAndPromptCardioRecovery({
+  checkFn = checkRecoveryLog,
+  openSheetFn = fn => useUI.getState().openSheet(fn),
+  finishFn = finishRecoveredSession,
+  discardFn = discardRecoveredSession,
+  toastFn = msg => useUI.getState().toast(msg),
+  navFn = nav
+} = {}) {
+  const recovered = await checkFn().catch(() => null)
+  if (!recovered) return null
+  openSheetFn(close => (
+    <>
+      <h3>{t('Recover interrupted cardio?')}</h3>
+      <div className="muted small" style={{ marginBottom: 14, lineHeight: 1.5 }}>
+        {t(
+          'Found an unfinished {0} ({1}, {2} GPS points) from an unexpected shutdown.',
+          t(recovered.type || recovered.activityType || 'run'),
+          fmtDur(recovered.durationMs || 0),
+          recovered.points?.length || 0
+        )}
+      </div>
+      <div className="row" style={{ gap: 10 }}>
+        <Button
+          variant="primary"
+          style={{ flex: 1 }}
+          onClick={async () => {
+            try {
+              const saved = await finishFn(recovered)
+              close()
+              toastFn(t('Cardio activity recovered and saved'))
+              if (saved?.id) navFn('/cardio/' + saved.id)
+            } catch {
+              toastFn(t('Could not recover cardio activity'))
+            }
+          }}
+        >
+          {t('Restore & Save')}
+        </Button>
+        <Button
+          variant="plain"
+          style={{ flex: 1 }}
+          onClick={async () => {
+            await discardFn(recovered).catch(() => {})
+            close()
+            toastFn(t('Recovery log discarded'))
+          }}
+        >
+          {t('Discard')}
+        </Button>
+      </div>
+    </>
+  ))
+  return recovered
+}
+
 function Shell() {
   const navigate = useNavigate()
   const loc = useLocation()
@@ -102,10 +163,16 @@ function Shell() {
   const isGuest = useStore(s => s.isGuest())
   const sessionExpired = useStore(s => Boolean(s.sessionExpired || s.reAuthNeeded))
   const langV = useLang()   // re-renders the whole shell when the language (pack) changes
+  const recoveryCheckedRef = useRef(false)
   useEffect(() => { setNav(navigate) }, [navigate])
   useEffect(() => syncThemeEffect(S.theme, S.accent), [S.theme, S.accent])
   useEffect(() => { setLang(S.lang || 'en') }, [S.lang])
   useEffect(() => { document.documentElement.lang = S.lang || 'en' }, [langV, S.lang])
+  useEffect(() => {
+    if (!ready || recoveryCheckedRef.current) return
+    recoveryCheckedRef.current = true
+    checkAndPromptCardioRecovery()
+  }, [ready])
   // every tab/route change starts at the top of the page
   useEffect(() => { window.scrollTo(0, 0) }, [loc.pathname])
   // bound to the workout, not to the route — checking Stats mid-session keeps the screen on
@@ -142,6 +209,7 @@ function Shell() {
               <Route path="/library" element={<Library />} />
               <Route path="/exercises" element={<Navigate to="/library" replace />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="/settings/privacy" element={<PrivacySettings />} />
               {/* The Coach screens gate themselves on the instance config; the routes exist
                   unconditionally so a deep link from a notification lands somewhere sane
                   rather than on the catch-all. */}

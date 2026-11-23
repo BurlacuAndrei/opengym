@@ -58,7 +58,10 @@ export const DEF = {
   // Informed consent records for external features (Issue #39).
   privacy: { consents: {} },
   // Voice split cues (TTS with audio ducking, Issue #64). Default true.
-  voiceCues: true
+  voiceCues: true,
+  voiceDucking: true,
+  // GPS Track retention period ('never' | '1y' | '2y' | '5y').
+  trackRetention: 'never'
 }
 const clone = o => JSON.parse(JSON.stringify(o))
 

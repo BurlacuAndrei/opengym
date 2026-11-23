@@ -7,7 +7,7 @@ import { lastEntryFor, bestWeightFor, buildSets, effectiveRoutineId, effectiveDa
 import { beep, vibrate } from './lib/sound.js'
 import { t, instrFor, getLang, INSTR_LANGS } from './lib/i18n.js'
 import { nav } from './lib/nav.js'
-import { starterRoutines } from './lib/starter.js'
+import { starterRoutines, STARTER_PLANS, applyStarterPlan } from './lib/starter.js'
 import Media, { Thumb } from './components/Media.jsx'
 import Stepper from './components/Stepper.jsx'
 import Icon from './components/Icon.jsx'
@@ -47,13 +47,48 @@ export function confirmSheet(opts) {
 }
 
 /* ============================ starter plan ============================ */
-export function loadStarterPlan() {
-  const [push, pull, legs] = starterRoutines()
-  update(st => {
-    st.routines.push(push, pull, legs)
-    st.week[1] = push.id; st.week[3] = pull.id; st.week[5] = legs.id
-  })
-  toast(t('Starter plan loaded — Mon Push · Wed Pull · Fri Legs'))
+export function starterPlanSheet() {
+  return ui().openSheet(close => (
+    <>
+      <h3>{t('Choose a starter plan')}</h3>
+      <div className="muted small" style={{ marginBottom: 12 }}>
+        {t('Pick a multi-sport or strength template to add to your weekly schedule.')}
+      </div>
+      <div className="list">
+        {STARTER_PLANS.map(tpl => (
+          <div
+            key={tpl.id}
+            className="item"
+            data-testid={`starter-sheet-${tpl.id}`}
+            onClick={() => {
+              update(st => applyStarterPlan(st, tpl.id))
+              close()
+              toast(t('{0} plan loaded', t(tpl.name)))
+            }}
+          >
+            <span className="lrow-i" style={{ '--tint': tpl.id === 'endurance' ? 'var(--pillar-cardio)' : tpl.id === 'mobility' ? 'var(--pillar-flow)' : 'var(--pillar-strength)' }}>
+              <Icon name={tpl.emoji} />
+            </span>
+            <div className="grow">
+              <div className="tt">{t(tpl.name)}</div>
+              <div className="ss">{t(tpl.description)}</div>
+            </div>
+            <span className="tag acc">{t('Load')}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  ))
+}
+
+export function loadStarterPlan(templateId) {
+  if (typeof templateId === 'string' && STARTER_PLANS.some(p => p.id === templateId)) {
+    const tpl = STARTER_PLANS.find(p => p.id === templateId)
+    update(st => applyStarterPlan(st, templateId))
+    toast(t('{0} plan loaded', t(tpl.name)))
+    return
+  }
+  return starterPlanSheet()
 }
 
 /* ============================ weight picker (shared: body weight + goal) ============================ */

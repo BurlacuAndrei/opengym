@@ -63,6 +63,17 @@ export const EXTERNAL_FEATURES = [
     revocationInstructions: 'Toggle off at any time to block outbound elevation lookups.',
     icon: 'arrowUp',
     tint: 'var(--pillar-cardio, var(--blue))'
+  },
+  {
+    id: 'osm_tiles',
+    name: 'OpenStreetMap Map Tiles',
+    recipient: 'OpenStreetMap Foundation',
+    recipientUrl: 'https://www.openstreetmap.org',
+    triggerTiming: 'On-demand when viewing interactive Route maps in Activity Detail',
+    payloadSummary: 'Map tile coordinates and bounding area for the viewed Route.',
+    revocationInstructions: 'Toggle off at any time to fall back to offline Route canvas previews.',
+    icon: 'globe',
+    tint: 'var(--teal)'
   }
 ]
 

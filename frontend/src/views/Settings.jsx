@@ -127,8 +127,8 @@ export default function Settings() {
       </Row>
     </Section>
 
-    {/* ---------- during a workout ---------- */}
-    <Section title={t('During a workout')} footer={wakeOK ? t('The screen stays on while a workout is running, so you don’t have to unlock your phone between sets.') : null}>
+    {/* ---------- during an activity ---------- */}
+    <Section title={t('During an Activity')} footer={wakeOK ? t('The screen stays on while a workout or cardio session is running.') : null}>
       <SelectRow icon="timer" iconTint="var(--orange)" title={t('Rest timer')}
         value={S.restSec} onChange={v => update(s => { s.restSec = v })}
         options={[60, 90, 120, 150, 180].map(v => ({ value: v, label: v + 's' }))} />
@@ -142,9 +142,14 @@ export default function Settings() {
       <Row icon="bell" iconTint="var(--pink)" title={t('Sounds')}>
         <Switch checked={!!S.sound} onChange={v => update(s => { s.sound = v })} />
       </Row>
-      <Row icon="bell" iconTint="var(--teal)" title={t('Voice split cues')}
-        subtitle={t('Audio announcements on split completion')}>
+      <Row icon="bell" iconTint="var(--teal)" title={t('Voice Split & Interval Cues (TTS)')}
+        subtitle={t('Audio announcements on splits and interval transitions')}>
         <Switch checked={S.voiceCues !== false} onChange={v => update(s => { s.voiceCues = v })} />
+      </Row>
+      <Row icon="bell" iconTint="var(--indigo)" title={t('Audio ducking')}
+        subtitle={t('Lower music volume briefly during voice cues')}>
+        <Switch checked={S.voiceDucking !== false} disabled={S.voiceCues === false}
+          onChange={v => update(s => { s.voiceDucking = v })} />
       </Row>
       {/* Two names for the same judgement, so the column asks in the scale you already think in.
           The (i) sits before the control — you read it on the way to the choice, not after it. */}
@@ -204,7 +209,10 @@ export default function Settings() {
 
     {/* ---------- data: fill it, bring things over, back it up, wipe it ---------- */}
     <Section title={t('Data')}>
-      <Row icon="sparkles" iconTint="var(--acc)" title={t('Load starter plan (PPL)')} accessory="chevron" onClick={loadStarterPlan} />
+      <Row icon="shield" iconTint="var(--pillar-cardio, var(--blue))" title={t('Privacy, Maps & Track Retention')}
+        subtitle={t('Consent for map tiles, DEM elevation, Coach & track pruning')}
+        accessory="chevron" onClick={() => nav('/settings/privacy')} />
+      <Row icon="sparkles" iconTint="var(--acc)" title={t('Load starter plan')} accessory="chevron" onClick={() => loadStarterPlan()} />
       <Row icon="shuffle" iconTint="var(--teal)" title={t('Import from another app')}
         subtitle={t('FitNotes, Strong, Hevy — or body weight from Apple Health')}
         accessory="chevron" onClick={() => importRef.current.click()} />

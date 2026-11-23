@@ -12,6 +12,12 @@ import {
   revokeConsent,
   formatConsentDate
 } from '../lib/privacy.js'
+import {
+  RETENTION_PERIODS,
+  RETENTION_LABELS,
+  normalizeRetentionSetting,
+  pruneExpiredTracks
+} from '../lib/track-retention.js'
 import { openConsentSheet } from '../components/ConsentSheet.jsx'
 
 export default function PrivacySettings() {
@@ -33,6 +39,33 @@ export default function PrivacySettings() {
 
   const showDetail = feature => {
     openConsentSheet(feature)
+  }
+
+  const currentRetention = normalizeRetentionSetting(S?.trackRetention)
+
+  const handleRetentionChange = async period => {
+    update(s => {
+      s.trackRetention = period
+    })
+    if (period === 'never') {
+      toast(t('GPS track retention set to Keep forever'))
+      return
+    }
+    try {
+      const res = await pruneExpiredTracks(S?.cardioActivities || [], period)
+      if (res?.prunedCount > 0) {
+        update(s => {
+          s.cardioActivities = (s.cardioActivities || []).map(a =>
+            res.prunedIds?.includes(a.id) ? { ...a, trackPath: null, points: undefined } : a
+          )
+        })
+        toast(t('Pruned {0} expired GPS tracks', res.prunedCount))
+      } else {
+        toast(t('GPS track retention updated'))
+      }
+    } catch {
+      toast(t('GPS track retention updated'))
+    }
   }
 
   return (
@@ -87,6 +120,20 @@ export default function PrivacySettings() {
             </Row>
           )
         })}
+      </Section>
+
+      <Section title={t('GPS Track Retention')} footer={t('Automatically prune raw GPS coordinates older than the selected retention window while keeping workout summaries.')}>
+        {RETENTION_PERIODS.map(period => (
+          <Row
+            key={period}
+            icon="history"
+            iconTint="var(--pillar-cardio, var(--blue))"
+            title={t(RETENTION_LABELS[period] || period)}
+            onClick={() => handleRetentionChange(period)}
+          >
+            {currentRetention === period && <Icon name="check" className="accent" />}
+          </Row>
+        ))}
       </Section>
 
       <Section title={t('Local data')}>
