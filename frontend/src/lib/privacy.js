@@ -52,6 +52,17 @@ export const EXTERNAL_FEATURES = [
     revocationInstructions: 'Toggle off to unsubscribe from all push notification dispatches.',
     icon: 'bell',
     tint: 'var(--orange)'
+  },
+  {
+    id: 'elevation_lookup',
+    name: 'DEM Elevation Lookup',
+    recipient: 'Open-Meteo Elevation API',
+    recipientUrl: 'https://open-meteo.com',
+    triggerTiming: 'On-demand when tapping Correct Elevation on a GPS Track',
+    payloadSummary: 'Latitude and longitude coordinates of the Track being corrected.',
+    revocationInstructions: 'Toggle off at any time to block outbound elevation lookups.',
+    icon: 'arrowUp',
+    tint: 'var(--pillar-cardio, var(--blue))'
   }
 ]
 

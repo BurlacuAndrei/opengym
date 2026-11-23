@@ -7,11 +7,19 @@ import Icon from '../components/Icon.jsx'
 import RouteMap from '../components/RouteMap.jsx'
 import PrBadge, { ActivityPrBadges } from '../components/PrBadge.jsx'
 import { detectActivityPRs } from '../lib/pr.js'
-import { exportGPX, sanitizeFilename } from '../lib/gpx-io.js'
+import { exportGPX, sanitizeFilename, importGPXAsRoute } from '../lib/gpx-io.js'
 import { trimTrackPoints, resolveTrackPath } from '../lib/track-trim.js'
 import { getCardioAdapter, writeTrack } from '../lib/cardio-adapter.js'
 import { lazyFetchTrack } from '../lib/track-sync.js'
 import { api } from '../lib/api.js'
+import { openManualCardioSheet } from '../components/ManualCardioSheet.jsx'
+import { openConsentSheet } from '../components/ConsentSheet.jsx'
+import { EXTERNAL_FEATURES } from '../lib/privacy.js'
+import {
+  ELEVATION_FEATURE_ID,
+  hasElevationConsent,
+  enrichTrackElevation,
+} from '../lib/elevation-api.js'
 import {
   haversineDistance,
   getPointEle,
@@ -40,6 +48,70 @@ import { fmtDate, fmtDur, fmtNum } from '../lib/format.js'
 const CHART_W = 500
 const CHART_H = 130
 const P = { l: 48, r: 16, t: 14, b: 24 }
+
+export async function saveActivityAsRoute(activity, trackPoints, { isServerMode = false, nameFallback = 'Route' } = {}) {
+  if (!Array.isArray(trackPoints) || trackPoints.length === 0) return null
+  const opts = {}
+  if (activity?.distanceM > 0) opts.distanceM = activity.distanceM
+  if (activity?.elevationGainM != null) opts.elevationGainM = activity.elevationGainM
+  const result = await importGPXAsRoute({
+    name: activity?.name || nameFallback,
+    desc: activity?.notes || '',
+    points: trackPoints,
+  }, opts)
+  if (isServerMode && result?.route?.id) {
+    try {
+      await api(`/api/routes/${encodeURIComponent(result.route.id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(result.routeData),
+      })
+    } catch (serverErr) {
+      console.warn('Server route sync failed:', serverErr)
+    }
+  }
+  return result
+}
+
+export async function correctActivityElevation(
+  activity,
+  trackData,
+  trackPoints,
+  { state, updateCardioActivity, isServerMode = false } = {}
+) {
+  if (!Array.isArray(trackPoints) || trackPoints.length === 0) return null
+  const freshState = state || useStore.getState()?.S || {}
+  const baseTrack = trackData && typeof trackData === 'object' && !Array.isArray(trackData)
+    ? { ...trackData, points: trackPoints }
+    : { ...activity, points: trackPoints }
+  const enriched = await enrichTrackElevation(baseTrack, { state: freshState })
+  if (Array.isArray(enriched?.elevations) && enriched.elevations.every(e => e == null)) {
+    return { unavailable: true }
+  }
+  const splits = enriched.points?.length >= 2
+    ? computeSplits(enriched.points, { unit: freshState.unit })
+    : (baseTrack.splits || activity?.splits || [])
+  const updatedTrack = { ...baseTrack, ...enriched, splits }
+  const trackPath = resolveTrackPath(activity) || `${activity.id}.json`
+  await writeTrack(trackPath, updatedTrack)
+  const patch = {
+    elevationGainM: enriched.elevationGainM ?? enriched.gain,
+    splits,
+  }
+  if (typeof updateCardioActivity === 'function' && activity?.id) {
+    updateCardioActivity(activity.id, patch)
+  }
+  if (isServerMode && activity?.id) {
+    try {
+      await api(`/api/tracks/${encodeURIComponent(activity.id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(updatedTrack),
+      })
+    } catch (serverErr) {
+      console.warn('Server track sync failed:', serverErr)
+    }
+  }
+  return { updatedTrack, patch }
+}
 
 export default function ActivityDetail({
   id: propId,
@@ -92,6 +164,8 @@ export default function ActivityDetail({
   const [trimEnd, setTrimEnd] = useState(0)
   const [savingTrim, setSavingTrim] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [savingRoute, setSavingRoute] = useState(false)
+  const [correctingElevation, setCorrectingElevation] = useState(false)
 
   // Load track points from adapter / server if not already present
   useEffect(() => {
@@ -389,6 +463,81 @@ export default function ActivityDetail({
     }
   }
 
+  const handleEdit = () => {
+    if (!activity?.id) return
+    openManualCardioSheet(
+      {
+        ...activity,
+        type: activity.cardioType || activity.type || activity.sport || 'run',
+        startTime: activity.startTime || activity.d,
+      },
+      {
+        onSave: saved => {
+          if (saved) setActivity(prev => ({ ...prev, ...saved }))
+        },
+        onDelete: () => handleBack(),
+      }
+    )
+  }
+
+  const handleSaveAsRoute = async () => {
+    if (savingRoute || trackPoints.length === 0) return
+    setSavingRoute(true)
+    try {
+      await saveActivityAsRoute(activity, trackPoints, {
+        isServerMode,
+        nameFallback: t(activity.cardioType || activity.type || 'Cardio'),
+      })
+      useUI.getState().toast?.(t('Saved as route'))
+    } catch (err) {
+      useUI.getState().toast?.(t('Failed to save route'))
+    } finally {
+      setSavingRoute(false)
+    }
+  }
+
+  const runElevationCorrection = async () => {
+    if (correctingElevation || trackPoints.length === 0) return
+    setCorrectingElevation(true)
+    try {
+      const freshState = useStore.getState()?.S || S
+      const res = await correctActivityElevation(activity, trackData, trackPoints, {
+        state: freshState,
+        updateCardioActivity,
+        isServerMode,
+      })
+      if (res?.unavailable) {
+        useUI.getState().toast?.(t('Elevation data unavailable'))
+        return
+      }
+      if (res?.updatedTrack) {
+        setTrackData(res.updatedTrack)
+        setActivity(prev => ({
+          ...prev,
+          ...res.patch,
+          track: res.updatedTrack,
+          points: res.updatedTrack.points,
+        }))
+        useUI.getState().toast?.(t('Elevation corrected'))
+      }
+    } catch (err) {
+      useUI.getState().toast?.(t('Failed to correct elevation'))
+    } finally {
+      setCorrectingElevation(false)
+    }
+  }
+
+  const handleCorrectElevation = () => {
+    if (correctingElevation || trackPoints.length === 0) return
+    const currentState = useStore.getState()?.S || S
+    if (!hasElevationConsent(currentState)) {
+      const feat = EXTERNAL_FEATURES.find(f => f.id === ELEVATION_FEATURE_ID)
+      openConsentSheet(feat, { onAgree: () => { runElevationCorrection() } })
+      return
+    }
+    runElevationCorrection()
+  }
+
   // Active hover details
   const activeHover = hoverIndex != null && chartData[hoverIndex] ? chartData[hoverIndex] : null
   const hoverX = activeHover ? getX(activeHover.cumDist) : null
@@ -415,7 +564,44 @@ export default function ActivityDetail({
           <Icon name="chevronLeft" /> {t('Back')}
         </button>
 
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            className="btn plain"
+            onClick={handleEdit}
+            disabled={!activity?.id}
+            data-testid="edit-activity-btn"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+          >
+            <Icon name="pencil" /> {t('Edit')}
+          </button>
+
+          {trackPoints.length > 0 && (
+            <>
+              <button
+                type="button"
+                className="btn plain"
+                onClick={handleSaveAsRoute}
+                disabled={savingRoute}
+                data-testid="save-route-btn"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+              >
+                <Icon name="link" /> {savingRoute ? t('Saving route…') : t('Save as Route')}
+              </button>
+
+              <button
+                type="button"
+                className="btn plain"
+                onClick={handleCorrectElevation}
+                disabled={correctingElevation}
+                data-testid="correct-elevation-btn"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+              >
+                <Icon name="arrowUp" /> {correctingElevation ? t('Correcting…') : t('Correct Elevation')}
+              </button>
+            </>
+          )}
+
           {trackPoints.length >= 2 && (
             <button
               type="button"

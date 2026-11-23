@@ -1,9 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import ActivityDetail from './ActivityDetail.jsx'
+import ActivityDetail, {
+  saveActivityAsRoute,
+  correctActivityElevation,
+} from './ActivityDetail.jsx'
 import { useStore, DEF } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
+import { EXTERNAL_FEATURES } from '../lib/privacy.js'
+import {
+  ELEVATION_FEATURE_ID,
+  ElevationConsentError,
+} from '../lib/elevation-api.js'
 import {
   createMemoryCardioAdapter,
   setCardioAdapter,
@@ -397,6 +405,105 @@ describe('ActivityDetail View (Issue #83)', () => {
           body: trackPayload,
         })
       )
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // 6. Activity Detail Actions: Edit, Save as Route, DEM Elevation Correction
+  // -------------------------------------------------------------------------
+  describe('6. Activity Detail Actions (Issue #96)', () => {
+    it('registers elevation_lookup in EXTERNAL_FEATURES', () => {
+      const feat = EXTERNAL_FEATURES.find(f => f.id === ELEVATION_FEATURE_ID)
+      expect(feat).toBeDefined()
+      expect(feat.recipient).toContain('Open-Meteo')
+    })
+
+    it('renders Edit, Save as Route, and Correct Elevation when trackPoints exist, and hides route/elevation actions without points', () => {
+      const withPts = renderToStaticMarkup(
+        React.createElement(ActivityDetail, { activity: sampleActivity })
+      )
+      expect(withPts).toContain('data-testid="edit-activity-btn"')
+      expect(withPts).toContain('data-testid="save-route-btn"')
+      expect(withPts).toContain('data-testid="correct-elevation-btn"')
+
+      const noPts = renderToStaticMarkup(
+        React.createElement(ActivityDetail, {
+          activity: { ...sampleActivity, points: [], track: undefined },
+        })
+      )
+      expect(noPts).toContain('data-testid="edit-activity-btn"')
+      expect(noPts).not.toContain('data-testid="save-route-btn"')
+      expect(noPts).not.toContain('data-testid="correct-elevation-btn"')
+    })
+
+    it('saveActivityAsRoute writes routes/<id>.json, appends to S.routes and S.savedRoutes, and syncs in server mode', async () => {
+      const putSpy = vi.spyOn(apiModule, 'api').mockResolvedValue({ ok: true })
+      const res = await saveActivityAsRoute(sampleActivity, sampleTrackPoints, {
+        isServerMode: true,
+      })
+      expect(res.route).toBeDefined()
+      expect(res.trackPath).toBe(`routes/${res.route.id}.json`)
+
+      const stored = await memoryAdapter.readTrack(res.trackPath)
+      expect(stored.points.length).toBe(sampleTrackPoints.length)
+
+      const state = useStore.getState().S
+      expect(state.routes.some(r => r.id === res.route.id)).toBe(true)
+      expect(state.savedRoutes.some(r => r.id === res.route.id)).toBe(true)
+      expect(putSpy).toHaveBeenCalledWith(
+        `/api/routes/${encodeURIComponent(res.route.id)}`,
+        expect.objectContaining({ method: 'PUT' })
+      )
+    })
+
+    it('correctActivityElevation enforces consent, updates track + store + server when granted, and handles all-null DEM response', async () => {
+      await expect(
+        correctActivityElevation(sampleActivity, null, sampleTrackPoints, {
+          state: { ...DEF, privacy: { consents: {} } },
+        })
+      ).rejects.toThrow(ElevationConsentError)
+
+      const consentedState = {
+        ...DEF,
+        unit: 'kg',
+        privacy: {
+          consents: {
+            [ELEVATION_FEATURE_ID]: { agreedAt: new Date().toISOString(), version: 1 },
+          },
+        },
+      }
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ elevation: [100, 120, 145, 160, 155, 170] }),
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      const putSpy = vi.spyOn(apiModule, 'api').mockResolvedValue({ ok: true })
+
+      const res = await correctActivityElevation(sampleActivity, null, sampleTrackPoints, {
+        state: consentedState,
+        updateCardioActivity: useStore.getState().updateCardioActivity,
+        isServerMode: true,
+      })
+
+      expect(res.updatedTrack.points.length).toBe(sampleTrackPoints.length)
+      expect(res.patch.elevationGainM).toBeGreaterThan(0)
+      expect(useStore.getState().S.cardioActivities[0].elevationGainM).toBe(res.patch.elevationGainM)
+      const savedTrack = await memoryAdapter.readTrack(resolveTrackPath(sampleActivity))
+      expect(savedTrack.elevationGainM).toBe(res.patch.elevationGainM)
+      expect(putSpy).toHaveBeenCalledWith(
+        '/api/tracks/act-test-1',
+        expect.objectContaining({ method: 'PUT' })
+      )
+
+      // All-null DEM response returns unavailable
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ elevation: [null, null, null, null, null, null] }),
+      })
+      const unavail = await correctActivityElevation(sampleActivity, null, sampleTrackPoints, {
+        state: consentedState,
+      })
+      expect(unavail).toEqual({ unavailable: true })
     })
   })
 })
