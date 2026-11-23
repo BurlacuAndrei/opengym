@@ -2,43 +2,75 @@ import { useState } from 'react'
 import { useStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
 import { effectiveRoutineId } from '../lib/history.js'
-import { todayISO, fmtDate, fmtDur, fmtVol, MONTHS_LONG } from '../lib/format.js'
+import { todayISO, isoOf, fmtDate, fmtDur, fmtVol, MONTHS_LONG } from '../lib/format.js'
 import { fmtDist } from '../lib/cardio-format.js'
+import { nav } from '../lib/nav.js'
 import { t } from '../lib/i18n.js'
 import Icon from './Icon.jsx'
 import { dayOverrideSheet, workoutDetailSheet, WorkoutRow } from '../sheets.jsx'
-import { openManualCardioSheet } from './ManualCardioSheet.jsx'
+
+function sessionIso(item) {
+  if (!item) return ''
+  if (typeof item.d === 'string' && item.d.length >= 10) return item.d.slice(0, 10)
+  if (typeof item.date === 'string' && item.date.length >= 10) return item.date.slice(0, 10)
+  const raw = item.startTime || item.completedAt
+  if (typeof raw === 'string' && raw.length >= 10) return raw.slice(0, 10)
+  if (raw) {
+    const dt = new Date(raw)
+    if (!isNaN(dt.getTime())) return isoOf(dt)
+  }
+  return ''
+}
 
 export default function Calendar({ start, close }) {
   const st = useStore(s => s.S)
   const [cur, setCur] = useState(() => { const d = start ? new Date(start) : new Date(); d.setDate(1); return d })
   const y = cur.getFullYear(), mo = cur.getMonth()
+  const normUnit = st.unit === 'lb' ? 'lbs' : (st.unit || 'kg')
   const byDay = {}
 
-  st.workouts.forEach(w => {
+  ;(st.workouts || []).forEach(w => {
     byDay[w.d] = byDay[w.d] || []
-    byDay[w.d].push({ ...w, entryType: 'workout' })
+    byDay[w.d].push({ ...w, entryType: 'workout', pillar: w.pillar || 'strength' })
   })
 
   ;(st.cardioActivities || []).forEach(c => {
-    const d = c.d || (c.startTime ? (typeof c.startTime === 'string' && c.startTime.length >= 10 ? c.startTime.slice(0, 10) : '') : '')
+    const d = sessionIso(c)
     if (d) {
       byDay[d] = byDay[d] || []
-      byDay[d].push({ ...c, entryType: 'cardio', d })
+      byDay[d].push({ ...c, entryType: 'cardio', pillar: 'cardio', d })
+    }
+  })
+
+  ;(st.freestyleSessions || []).forEach(f => {
+    const d = sessionIso(f)
+    if (d) {
+      byDay[d] = byDay[d] || []
+      const isFlow = f.kind === 'hiit' || f.kind === 'yoga' || f.kind === 'mobility'
+      byDay[d].push({ ...f, entryType: 'freestyle', pillar: isFlow ? 'flow' : 'freestyle', d })
     }
   })
 
   const startOffset = (new Date(y, mo, 1).getDay() + 6) % 7
   const daysIn = new Date(y, mo + 1, 0).getDate()
-  const monthWs = st.workouts.filter(w => w.d && w.d.startsWith(y + '-' + String(mo + 1).padStart(2, '0')))
-  const monthCs = (st.cardioActivities || []).filter(c => {
-    const d = c.d || (c.startTime ? (typeof c.startTime === 'string' && c.startTime.length >= 10 ? c.startTime.slice(0, 10) : '') : '')
-    return d && d.startsWith(y + '-' + String(mo + 1).padStart(2, '0'))
-  })
-  const monthTotal = monthWs.length + monthCs.length
+  const ym = y + '-' + String(mo + 1).padStart(2, '0')
+  const monthWs = (st.workouts || []).filter(w => w.d && w.d.startsWith(ym))
+  const monthCs = (st.cardioActivities || []).filter(c => sessionIso(c).startsWith(ym))
+  const monthFs = (st.freestyleSessions || []).filter(f => sessionIso(f).startsWith(ym))
+  const monthTotal = monthWs.length + monthCs.length + monthFs.length
   const monthVol = monthWs.reduce((a, w) => a + (w.vol || 0), 0)
   const monthMs = monthWs.reduce((a, w) => a + Math.max(0, (w.end || w.start) - w.start), 0) +
-    monthCs.reduce((a, c) => a + (c.durationMs || 0), 0)
+    monthCs.reduce((a, c) => a + (c.durationMs || 0), 0) +
+    monthFs.reduce((a, f) => a + (f.durationMs || (f.durationSec ? f.durationSec * 1000 : 0)), 0)
+
+  const openItem = (it, closeFn) => {
+    closeFn()
+    if (it.entryType === 'cardio') {
+      nav('/cardio/' + it.id)
+    } else {
+      workoutDetailSheet(it)
+    }
+  }
 
   const cells = []
   for (let i = 0; i < startOffset; i++) cells.push(<div key={'e' + i} />)
@@ -49,31 +81,25 @@ export default function Calendar({ start, close }) {
     cells.push(<button key={d} className={'cal-d' + (items && items.length ? ' has' : '') + (iso === todayISO() ? ' today' : '')} onClick={() => {
       if (!items || !items.length) { close(); dayOverrideSheet(iso); return }
       if (items.length === 1) {
-        close()
-        const single = items[0]
-        if (single.entryType === 'cardio' || (!single.entries && single.durationMs)) {
-          openManualCardioSheet(single)
-        } else {
-          workoutDetailSheet(single)
-        }
+        openItem(items[0], close)
         return
       }
       close()
       useUI.getState().openSheet(c2 => <>
         <h3>{fmtDate(iso, true)}</h3>
         <div className="list">
-          {items.map(it => (it.entryType === 'cardio' || (!it.entries && it.durationMs))
-            ? <div key={it.id} className="item" onClick={() => { c2(); openManualCardioSheet(it) }}>
-                <span className="lrow-i" style={{ width: 34, height: 34, borderRadius: 8, fontSize: 19 }}>
+          {items.map(it => it.entryType === 'cardio'
+            ? <div key={it.id} className="item" onClick={() => openItem(it, c2)}>
+                <span className="lrow-i" style={{ width: 34, height: 34, borderRadius: 8, fontSize: 19, '--tint': 'var(--pillar-cardio)' }}>
                   <Icon name={it.cardioType === 'ride' || it.type === 'ride' ? 'bike' : 'figureRun'} />
                 </span>
                 <div className="grow">
                   <div className="tt" style={{ textTransform: 'capitalize' }}>{t(it.cardioType || it.type || 'Cardio')}</div>
-                  <div className="ss">{[fmtDate(iso, true), fmtDur(it.durationMs), it.distanceM > 0 ? fmtDist(it.distanceM, st.unit) : null].filter(Boolean).join(' · ')}</div>
+                  <div className="ss">{[fmtDate(iso, true), fmtDur(it.durationMs), it.distanceM > 0 ? fmtDist(it.distanceM, normUnit) : null].filter(Boolean).join(' · ')}</div>
                 </div>
                 <Icon name="chevronRight" className="chev" />
               </div>
-            : <WorkoutRow key={it.id} w={it} onClick={() => { c2(); workoutDetailSheet(it) }} />
+            : <WorkoutRow key={it.id} w={it} onClick={() => openItem(it, c2)} />
           )}
         </div>
       </>)

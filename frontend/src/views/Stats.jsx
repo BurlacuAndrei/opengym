@@ -2,8 +2,10 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { EXIDX } from '../lib/exercises.js'
-import { lastBW, streakWeeks, setLabel, modeOf, effortOf } from '../lib/history.js'
-import { fmtNum, fmtDate, fmtVol, todayISO, weekKey } from '../lib/format.js'
+import { lastBW, streakWeeks, setLabel, modeOf, effortOf, unifiedHistory } from '../lib/history.js'
+import { fmtNum, fmtDate, fmtVol, fmtDur, todayISO, weekKey, isoOf } from '../lib/format.js'
+import { fmtDist, formatElevation, distanceUnit } from '../lib/cardio-format.js'
+import { calculateTrainingRhythm, sessionDate } from '../lib/training-load.js'
 import { t } from '../lib/i18n.js'
 import { bwSheet, goalSheet, calendarSheet, workoutDetailSheet, WorkoutRow, bwDeltaColor } from '../sheets.jsx'
 import LineChart from '../components/LineChart.jsx'
@@ -20,8 +22,57 @@ import { Button, Segmented, SelectRow } from '../components/ui.jsx'
 import PrBadge from '../components/PrBadge.jsx'
 import { computePersonalRecords, formatPrTime, formatPrPace } from '../lib/pr.js'
 
-// Personal Records section for cardio (Issue #66)
-function PersonalRecordsCard({ S }) {
+function TrainingRhythmCard({ S }) {
+  const rhythm = calculateTrainingRhythm(S)
+  const badgeColor =
+    rhythm.statusLabel === 'Steady Rhythm' ? 'var(--pillar-strength)'
+      : rhythm.statusLabel === 'Building Load' ? 'var(--orange)'
+      : rhythm.statusLabel === 'High Load' ? 'var(--red)'
+      : 'var(--pillar-cardio)'
+  const badgeBg = `color-mix(in srgb, ${badgeColor} 12%, transparent)`
+  const supportCopy =
+    rhythm.totalLoad === 0
+      ? 'Log a workout, cardio activity, or flow session to see your 7d/28d load rhythm.'
+      : rhythm.statusLabel === 'Steady Rhythm'
+      ? 'Your recent 7-day load is well balanced with your 28-day baseline.'
+      : rhythm.statusLabel === 'Building Load'
+      ? 'Load is trending above your 28-day baseline — weave in lighter days as needed.'
+      : rhythm.statusLabel === 'High Load'
+      ? 'Sharp load spike compared to your 28-day baseline — consider prioritizing recovery.'
+      : 'Lighter week relative to your 28-day baseline — great space to recover or build gently.'
+
+  return (
+    <div className="card" data-testid="training-rhythm-card">
+      <div className="row between" style={{ marginBottom: 8, alignItems: 'center' }}>
+        <h2 style={{ margin: 0 }}>{t('Training Rhythm')}</h2>
+        <span className="tag" style={{ color: badgeColor, background: badgeBg }}>
+          {t(rhythm.statusLabel)}
+        </span>
+      </div>
+      <div className="row between" style={{ alignItems: 'flex-end', gap: 12, marginTop: 6 }}>
+        <div>
+          <div className="stat-v">{rhythm.totalLoad > 0 ? rhythm.acwr.toFixed(2) : '—'}</div>
+          <div className="small dim">{t('7d / 28d ACWR')}</div>
+        </div>
+        <div className="row" style={{ gap: 16 }}>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontWeight: 600 }}>{Math.round(rhythm.acuteTotal)} AU</div>
+            <div className="small dim">{t('7d Acute')}</div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontWeight: 600 }}>{Math.round(rhythm.chronicTotal)} AU</div>
+            <div className="small dim">{t('28d Chronic')}</div>
+          </div>
+        </div>
+      </div>
+      <div className="small muted" style={{ marginTop: 10, lineHeight: 1.45 }}>
+        {t(supportCopy)}
+      </div>
+    </div>
+  )
+}
+
+function PersonalRecordsCard({ S, normUnit }) {
   const prData = computePersonalRecords(S.cardioActivities, S.personalRecords)
   const records = prData.records || {}
   const rows = [
@@ -58,7 +109,7 @@ function PersonalRecordsCard({ S }) {
                 {rec ? (
                   <>
                     <span style={{ fontWeight: 600 }}>{formatPrTime(rec.elapsedTime)}</span>
-                    <span className="dim">{formatPrPace(rec.elapsedTime, r.target, S.unit)}</span>
+                    <span className="dim">{formatPrPace(rec.elapsedTime, r.target, normUnit)}</span>
                     {(rec.d || rec.startTime) && (
                       <span className="muted">{fmtDate(rec.d || rec.startTime, true)}</span>
                     )}
@@ -80,22 +131,100 @@ function PersonalRecordsCard({ S }) {
   )
 }
 
-// Which muscles the training in a window actually hit — and, the point of the card,
-// which ones it keeps missing. Shading is relative within the window (lib/muscles.js).
+function CardioStatsTab({ S, normUnit }) {
+  const activities = Array.isArray(S.cardioActivities) ? S.cardioActivities : []
+  const totalDistM = activities.reduce((sum, a) => sum + (Number(a.distanceM) || 0), 0)
+  const totalDurMs = activities.reduce((sum, a) => sum + (Number(a.durationMs) || 0), 0)
+  const totalElevM = activities.reduce((sum, a) => sum + (Number(a.elevationGainM) || 0), 0)
+
+  const byWeek = new Map()
+  for (const a of activities) {
+    const dStr = sessionDate(a)
+    if (!dStr) continue
+    const wk = weekKey(dStr)
+    const entry = byWeek.get(wk) || { wk, distM: 0, durMs: 0, elevM: 0, t: new Date(dStr + 'T12:00:00').getTime() }
+    entry.distM += Number(a.distanceM) || 0
+    entry.durMs += Number(a.durationMs) || 0
+    entry.elevM += Number(a.elevationGainM) || 0
+    byWeek.set(wk, entry)
+  }
+  const weeklyPts = [...byWeek.values()]
+    .sort((a, b) => a.t - b.t)
+    .slice(-12)
+    .map(w => ({
+      t: w.t,
+      y: Math.round(((normUnit === 'lbs' ? w.distM / 1609.344 : w.distM / 1000)) * 100) / 100,
+      d: isoOf(new Date(w.t)),
+      note: fmtDur(w.durMs),
+    }))
+
+  const bySport = {}
+  for (const a of activities) {
+    const sp = a.cardioType || a.type || a.sport || 'run'
+    if (!bySport[sp]) bySport[sp] = { sport: sp, count: 0, distM: 0, durMs: 0 }
+    bySport[sp].count++
+    bySport[sp].distM += Number(a.distanceM) || 0
+    bySport[sp].durMs += Number(a.durationMs) || 0
+  }
+  const sportRows = Object.values(bySport).sort((a, b) => b.count - a.count)
+
+  return (
+    <div data-testid="stats-cardio-tab">
+      <div className="tiles">
+        <div className="tile"><div className="l"><Icon name="figureRun" />{t('Activities')}</div><div className="v">{activities.length}</div></div>
+        <div className="tile"><div className="l"><Icon name="globe" />{t('Distance')}</div><div className="v" style={{ fontSize: 22 }}>{fmtDist(totalDistM, normUnit)}</div></div>
+        <div className="tile"><div className="l"><Icon name="clock" />{t('Duration')}</div><div className="v" style={{ fontSize: 22 }}>{fmtDur(totalDurMs)}</div></div>
+        <div className="tile"><div className="l"><Icon name="arrowUp" />{t('Elevation')}</div><div className="v" style={{ fontSize: 22 }}>{formatElevation(totalElevM, normUnit)}</div></div>
+      </div>
+
+      <div className="card">
+        <h2>{t('Weekly cardio distance')}</h2>
+        {weeklyPts.length > 0 ? (
+          <div className="chart"><LineChart points={weeklyPts} h={160} unit={distanceUnit(normUnit)} color="var(--pillar-cardio)" /></div>
+        ) : (
+          <div className="muted small">{t('Complete a cardio activity to see weekly distance trends.')}</div>
+        )}
+      </div>
+
+      <div className="card">
+        <h2>{t('Sport breakdown')}</h2>
+        {sportRows.length > 0 ? (
+          <div>
+            {sportRows.map(sp => (
+              <div key={sp.sport} className="row between small" style={{ padding: '8px 0', borderBottom: 'var(--hair) solid var(--sep)' }}>
+                <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+                  <Icon name={sp.sport === 'ride' ? 'bike' : sp.sport === 'swim' ? 'swim' : 'figureRun'} />
+                  <span style={{ fontWeight: 600, textTransform: 'capitalize' }}>{t(sp.sport)}</span>
+                  <span className="pillar-badge pillar-cardio">{sp.count}</span>
+                </div>
+                <div className="row" style={{ gap: 12 }}>
+                  <span>{sp.distM > 0 ? fmtDist(sp.distM, normUnit) : '—'}</span>
+                  <span className="muted">{fmtDur(sp.durMs)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="muted small">{t('No cardio activities yet.')}</div>
+        )}
+      </div>
+
+      <PersonalRecordsCard S={S} normUnit={normUnit} />
+    </div>
+  )
+}
+
 function MuscleBalance({ S }) {
   const [win, setWin] = useState(7)
   const [hard, setHard] = useState(false)
   const [sel, setSel] = useState(null)
   const now = Date.now()
-  const inWin = S.workouts.filter(w =>
+  const workouts = Array.isArray(S.workouts) ? S.workouts : []
+  const inWin = workouts.filter(w =>
     win === 0 ? true
       : win === 7 ? weekKey(w.d) === weekKey(todayISO())
         : (w.start || new Date(w.d).getTime()) > now - win * 86400000)
-  // Counting only the sets taken near failure turns the map from "where did the volume go"
-  // into "where did the stimulus go" — a muscle can lead on sets and still never be trained
-  // hard. Offered only when the window holds ratings at all, since with none the hard map
-  // would just be empty and read as "you trained nothing".
-  const rated = inWin.some(w => w.entries.some(e => e.sets.some(s => s.done && isHardSet(s))))
+  const rated = inWin.some(w => (w.entries || []).some(e => (e.sets || []).some(s => s.done && isHardSet(s))))
   const on = hard && rated
   const load = loadOfWorkouts(inWin, on ? isHardSet : null)
   const { worked, missed } = rankOf(load)
@@ -136,11 +265,6 @@ function MuscleBalance({ S }) {
   </div>
 }
 
-// How hard the training was — the half of the picture a volume chart cannot show. Everything
-// is computed in RIR (lib/effort.js) and converted to whichever scale this profile reads.
-// Every number carries how much of the training it speaks for: rating is optional and off by
-// default, so a partly rated history is the normal case, and an average without its
-// denominator would quietly speak for sets that were never rated.
 function EffortCard({ S }) {
   const [win, setWin] = useState(90)
   const kind = displayScale(S)
@@ -149,10 +273,7 @@ function EffortCard({ S }) {
   const weeks = effortWeeks(S, win)
   const hist = effortHistogram(S, win)
   const maxBin = Math.max(1, ...hist.map(b => b.n))
-  // The week's set count rides along in the tooltip, because the pair is the reading:
-  // volume up with effort up is fatigue piling up, volume up with effort flat is adaptation.
   const pts = weeks.map(w => ({ t: w.t, y: toScale(kind, w.rir), note: t('{0} sets', w.sets) }))
-  // Bins run hardest-first in both scales: RIR 0 and RPE 10 are the same set.
   const binLabel = b => kind === 'rpe' ? (b.tail ? '≤ 6' : String(10 - b.rir)) : (b.tail ? b.rir + '+' : String(b.rir))
 
   return <div className="card">
@@ -191,32 +312,33 @@ function EffortCard({ S }) {
   </div>
 }
 
-// Stats = the analytics hub: all charts, progress and history live here.
-export default function Stats() {
-  const nav = useNavigate()
-  const S = useStore(s => s.S)
-  const [range, setRange] = useState(90)
+function StrengthStatsTab({ S, nav }) {
   const [exId, setExId] = useState(null)
   const [exMetric, setExMetric] = useState('top')
-  const now = Date.now()
+  const workouts = Array.isArray(S.workouts) ? S.workouts : []
   const anyEffort = hasEffort(S)
   const kind = displayScale(S)
   const hd = scaleName(kind)
 
-  const bwPts = S.bodyweight.filter(b => range === 0 || (b.t || new Date(b.d).getTime()) > now - range * 86400000)
-    .map(b => ({ t: b.t || new Date(b.d).getTime(), y: b.w, d: b.d }))
-  const bw30 = S.bodyweight.filter(b => (b.t || new Date(b.d).getTime()) > now - 30 * 86400000)
-  const bwDelta30 = bw30.length > 1 ? bw30[bw30.length - 1].w - bw30[0].w : null
-  const monthW = S.workouts.filter(w => w.d.slice(0, 7) === todayISO().slice(0, 7)).length
+  const totalTonnage = workouts.reduce((sum, w) => sum + (Number(w.vol) || 0), 0)
+  const volByWeek = new Map()
+  for (const w of workouts) {
+    if (!w.d) continue
+    const wk = weekKey(w.d)
+    const cur = volByWeek.get(wk) || { vol: 0, t: w.start || new Date(w.d + 'T12:00:00').getTime(), d: w.d }
+    cur.vol += Number(w.vol) || 0
+    volByWeek.set(wk, cur)
+  }
+  const tonnagePts = [...volByWeek.values()]
+    .sort((a, b) => a.t - b.t)
+    .slice(-12)
+    .map(v => ({ t: v.t, y: Math.round(v.vol), d: v.d }))
 
-  const exHist = [...new Set(S.workouts.flatMap(w => w.entries.map(e => e.id)))].filter(id => EXIDX[id]).sort((a, b) => EXIDX[a].n < EXIDX[b].n ? -1 : 1)
+  const exHist = [...new Set(workouts.flatMap(w => (w.entries || []).map(e => e.id)))].filter(id => EXIDX[id]).sort((a, b) => EXIDX[a].n < EXIDX[b].n ? -1 : 1)
   const curEx = exId && exHist.includes(exId) ? exId : exHist[0] || null
-  // How this exercise was logged most recently decides what the curve means: top weight,
-  // longest hold or top speed. Sets logged in another mode lack the field and score 0, so a
-  // switched exercise drops its old points instead of mixing seconds into a weight chart.
   const curMode = curEx ? (() => {
-    for (let i = S.workouts.length - 1; i >= 0; i--) {
-      const en = S.workouts[i].entries.find(e => e.id === curEx)
+    for (let i = workouts.length - 1; i >= 0; i--) {
+      const en = (workouts[i].entries || []).find(e => e.id === curEx)
       if (en) return modeOf({ ...(en.target || {}), id: curEx })
     }
     return modeOf({ id: curEx })
@@ -227,20 +349,22 @@ export default function Stats() {
   const exUnit = curCardio ? 'km/h' : curTimed ? 's' : S.unit
   let exPts = [], exList = [], exBest = 0
   if (curEx) {
-    S.workouts.forEach(w => {
-      const en = w.entries.find(e => e.id === curEx)
-      if (en) { const mx = Math.max(0, ...en.sets.filter(s => s.done).map(metric), curCardio || curTimed ? 0 : (en.topW || 0)); if (mx > 0) { exPts.push({ t: w.start, y: mx, d: w.d, sets: en.sets.filter(s => s.done), target: en.target }); if (mx > exBest) exBest = mx } }
+    workouts.forEach(w => {
+      const en = (w.entries || []).find(e => e.id === curEx)
+      if (en) {
+        const doneSets = (en.sets || []).filter(s => s.done)
+        const mx = Math.max(0, ...doneSets.map(metric), curCardio || curTimed ? 0 : (en.topW || 0))
+        if (mx > 0) {
+          exPts.push({ t: w.start, y: mx, d: w.d, sets: doneSets, target: en.target })
+          if (mx > exBest) exBest = mx
+        }
+      }
     })
     exList = exPts.slice(-5).reverse()
   }
-  // Estimated 1RM (issue #18) — only reps-mode training produces one, so cardio and timed
-  // work simply have no points and the toggle stays hidden.
   const e1Pts = curEx ? e1rmSeries(S, curEx) : []
   const e1Best = curEx ? best1RM(S, curEx) : null
   const showE1 = e1Pts.length > 0
-  // Effort on this exercise, per session. It rides on the top-set curve as well as having a
-  // curve of its own, because the two only mean something together: the same weight moved
-  // with more left in the tank is progress a weight-only chart draws as a flat line.
   const exRir = exPts.map(p => avgRir(p.sets))
   const showEff = exRir.filter(v => v != null).length >= 3
   const effPts = exPts.map((p, i) => (exRir[i] == null ? null : { t: p.t, y: toScale(kind, exRir[i]), d: p.d })).filter(Boolean)
@@ -248,7 +372,6 @@ export default function Stats() {
   const onEff = showEff && exMetric === 'effort'
   const topPts = exPts.map((p, i) => ({
     t: p.t, y: p.y, d: p.d,
-    // 0 RIR (nothing left) is a full dot, 4+ a faint one; unrated sessions keep the plain line.
     m: exRir[i] == null ? null : 1 - Math.min(4, Math.max(0, exRir[i])) / 4,
     note: exRir[i] == null ? undefined : hd + ' ' + fmtNum(toScale(kind, exRir[i]))
   }))
@@ -256,38 +379,22 @@ export default function Stats() {
   if (showE1) exOpts.push({ value: 'e1rm', label: t('Est. 1RM') })
   if (showEff) exOpts.push({ value: 'effort', label: t('Effort') })
 
-  return <>
-    <div className="hdr"><div><h1>{t('Stats')}</h1><div className="sub">{t('Progress & history')}</div></div>
-      <button className="iconbtn" onClick={() => nav('/history')} aria-label={t('History')}><Icon name="history" /></button></div>
-
-    <div className="tiles">
-      <div className="tile"><div className="l"><Icon name="dumbbell" />{t('Workouts')}</div><div className="v">{S.workouts.length}</div></div>
-      <div className="tile"><div className="l"><Icon name="calendar" />{t('This month')}</div><div className="v">{monthW}</div></div>
-      <div className="tile"><div className="l"><Icon name="flame" />{t('Week streak')}</div><div className="v">{streakWeeks(S)}</div></div>
-      <div className="tile"><div className="l"><Icon name="scale" />{t('Weight 30d')}</div><div className="v" style={{ fontSize: 22, color: bwDelta30 === null ? 'inherit' : bwDeltaColor(bwDelta30, (lastBW(S) || {}).w || 0) }}>{bwDelta30 === null ? '—' : (bwDelta30 > 0 ? '+' : '') + fmtNum(bwDelta30) + ' ' + S.unit}</div></div>
-    </div>
-
-    <div className="card">
-      <h2>{t('Activity — last 12 months')} <span className="dim" style={{ textTransform: 'none', letterSpacing: 0 }}>· {t('by time trained')}</span></h2>
-      <Heatmap S={S} onDay={iso => { const ws = S.workouts.filter(w => w.d === iso); if (ws.length === 1) workoutDetailSheet(ws[0]); else if (ws.length) calendarSheet(iso) }} />
-    </div>
-
-    {S.workouts.length > 0 && <MuscleBalance S={S} />}
-    {anyEffort && <EffortCard S={S} />}
-
-    <div className="cols">
+  return (
+    <div data-testid="stats-strength-tab">
       <div className="card">
         <div className="row between" style={{ marginBottom: 8 }}>
-          <h2 style={{ margin: 0 }}>{t('Body weight')}</h2>
-          <div className="row" style={{ gap: 8 }}>
-            <Button size="sm" icon="target" style={S.targetW ? { color: 'var(--yellow)' } : undefined} onClick={goalSheet}>{S.targetW ? fmtNum(S.targetW) : t('Goal')}</Button>
-            <Button size="sm" icon="plus" onClick={() => bwSheet()}>{t('Log')}</Button>
-          </div>
+          <h2 style={{ margin: 0 }}>{t('Tonnage')}</h2>
+          <span className="pillar-badge pillar-strength">{fmtVol(totalTonnage, S.unit)}</span>
         </div>
-        <Segmented className="seg-range" value={range} onChange={setRange}
-          options={[{ value: 30, label: '1M' }, { value: 90, label: '3M' }, { value: 365, label: '1Y' }, { value: 0, label: t('All') }]} />
-        <div className="chart"><LineChart points={bwPts} h={160} unit={S.unit} goal={S.targetW} /></div>
+        {tonnagePts.length > 0 ? (
+          <div className="chart"><LineChart points={tonnagePts} h={150} unit={S.unit} color="var(--pillar-strength)" /></div>
+        ) : (
+          <div className="muted small">{t('No workouts in this period yet.')}</div>
+        )}
       </div>
+
+      {workouts.length > 0 && <MuscleBalance S={S} />}
+      {anyEffort && <EffortCard S={S} />}
 
       <div className="card">
         <h2>{t('Exercise progress')}</h2>
@@ -316,16 +423,95 @@ export default function Stats() {
           </div>}
         </> : <div className="muted small">{t('Finish your first workout to see progress curves here.')}</div>}
       </div>
+
+      {workouts.length > 0 && <>
+        <div className="row between" style={{ marginBottom: 10 }}>
+          <h4 className="sec" style={{ margin: 0 }}>{t('Recent workouts')}</h4>
+          <Button size="sm" variant="ghost" trailingIcon="chevronRight" onClick={() => nav('/history')}>{t('All')} {workouts.length}</Button>
+        </div>
+        <div className="list">{[...workouts].reverse().slice(0, 6).map(w => <WorkoutRow key={w.id} w={w} onClick={() => workoutDetailSheet(w)} />)}</div>
+      </>}
+    </div>
+  )
+}
+
+export default function Stats({ initialTab = 'overview' }) {
+  let nav = () => {}
+  try {
+    nav = useNavigate()
+  } catch {}
+  const S = useStore(s => s.S) || {}
+  const [tab, setTab] = useState(initialTab)
+  const [range, setRange] = useState(30)
+  const normUnit = S.unit === 'lb' ? 'lbs' : (S.unit || 'kg')
+  const now = Date.now()
+
+  const allHistory = unifiedHistory(S, 'all')
+  const thisMonthPrefix = todayISO().slice(0, 7)
+  const monthSessions = allHistory.filter(item => (item.d || '').startsWith(thisMonthPrefix)).length
+
+  const bw = Array.isArray(S.bodyweight) ? S.bodyweight : []
+  const bwPts = bw.filter(b => range === 0 || (b.t || new Date(b.d).getTime()) > now - range * 86400000)
+    .map(b => ({ t: b.t || new Date(b.d).getTime(), y: b.w, d: b.d }))
+  const bw30 = bw.filter(b => (b.t || new Date(b.d).getTime()) > now - 30 * 86400000)
+  const bwDelta30 = bw30.length > 1 ? bw30[bw30.length - 1].w - bw30[0].w : null
+
+  return <>
+    <div className="hdr"><div><h1>{t('Stats')}</h1><div className="sub">{t('Progress & history')}</div></div>
+      <button className="iconbtn" onClick={() => nav('/history')} aria-label={t('History')}><Icon name="history" /></button></div>
+
+    <div style={{ marginBottom: 14 }}>
+      <Segmented
+        options={[
+          { value: 'overview', label: t('Overview') },
+          { value: 'cardio', label: t('Cardio') },
+          { value: 'strength', label: t('Strength') },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
     </div>
 
-    <PersonalRecordsCard S={S} />
+    {tab === 'overview' && (
+      <div data-testid="stats-overview-tab">
+        <div className="tiles">
+          <div className="tile"><div className="l"><Icon name="trophy" />{t('Sessions')}</div><div className="v">{allHistory.length}</div></div>
+          <div className="tile"><div className="l"><Icon name="calendar" />{t('This month')}</div><div className="v">{monthSessions}</div></div>
+          <div className="tile"><div className="l"><Icon name="flame" />{t('Week streak')}</div><div className="v">{streakWeeks(S)}</div></div>
+          <div className="tile"><div className="l"><Icon name="scale" />{t('Weight 30d')}</div><div className="v" style={{ fontSize: 22, color: bwDelta30 === null ? 'inherit' : bwDeltaColor(bwDelta30, (lastBW(S) || {}).w || 0) }}>{bwDelta30 === null ? '—' : (bwDelta30 > 0 ? '+' : '') + fmtNum(bwDelta30) + ' ' + S.unit}</div></div>
+        </div>
 
-    {S.workouts.length > 0 && <>
-      <div className="row between" style={{ marginBottom: 10 }}>
-        <h4 className="sec" style={{ margin: 0 }}>{t('Recent workouts')}</h4>
-        <Button size="sm" variant="ghost" trailingIcon="chevronRight" onClick={() => nav('/history')}>{t('All')} {S.workouts.length}</Button>
+        <TrainingRhythmCard S={S} />
+
+        <div className="card">
+          <div className="row between" style={{ marginBottom: 8 }}>
+            <h2 style={{ margin: 0 }}>{t('Activity — last 12 months')} <span className="dim" style={{ textTransform: 'none', letterSpacing: 0 }}>· {t('by time trained')}</span></h2>
+            <Button size="sm" variant="ghost" icon="calendar" onClick={() => calendarSheet()}>{t('Calendar')}</Button>
+          </div>
+          <Heatmap S={S} onDay={iso => {
+            const items = allHistory.filter(x => x.d === iso)
+            if (items.length === 1 && items[0].entryType === 'cardio') nav('/cardio/' + items[0].id)
+            else if (items.length === 1) workoutDetailSheet(items[0])
+            else if (items.length) calendarSheet(iso)
+          }} />
+        </div>
+
+        <div className="card">
+          <div className="row between" style={{ marginBottom: 8 }}>
+            <h2 style={{ margin: 0 }}>{t('Body weight')}</h2>
+            <div className="row" style={{ gap: 8 }}>
+              <Button size="sm" icon="target" style={S.targetW ? { color: 'var(--yellow)' } : undefined} onClick={goalSheet}>{S.targetW ? fmtNum(S.targetW) : t('Goal')}</Button>
+              <Button size="sm" icon="plus" onClick={() => bwSheet()}>{t('Log')}</Button>
+            </div>
+          </div>
+          <Segmented className="seg-range" value={range} onChange={setRange}
+            options={[{ value: 30, label: '1M' }, { value: 90, label: '3M' }, { value: 365, label: '1Y' }, { value: 0, label: t('All') }]} />
+          <div className="chart"><LineChart points={bwPts} h={160} unit={S.unit} goal={S.targetW} /></div>
+        </div>
       </div>
-      <div className="list">{[...S.workouts].reverse().slice(0, 6).map(w => <WorkoutRow key={w.id} w={w} onClick={() => workoutDetailSheet(w)} />)}</div>
-    </>}
+    )}
+
+    {tab === 'cardio' && <CardioStatsTab S={S} normUnit={normUnit} />}
+    {tab === 'strength' && <StrengthStatsTab S={S} nav={nav} />}
   </>
 }

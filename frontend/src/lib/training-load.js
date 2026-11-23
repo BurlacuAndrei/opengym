@@ -65,6 +65,13 @@ export function sessionDate(session) {
     const dt = new Date(session.start)
     if (!isNaN(dt.getTime())) return isoOf(dt)
   }
+  if (session.completedAt) {
+    if (typeof session.completedAt === 'string' && session.completedAt.length >= 10) {
+      return session.completedAt.slice(0, 10)
+    }
+    const dt = new Date(session.completedAt)
+    if (!isNaN(dt.getTime())) return isoOf(dt)
+  }
   return null
 }
 
@@ -93,6 +100,8 @@ export function calculateSessionLoad(session, opts = {}) {
   let durationMs = null
   if (typeof session.durationMs === 'number' && isFinite(session.durationMs)) {
     durationMs = Math.max(0, session.durationMs)
+  } else if (typeof session.durationSec === 'number' && isFinite(session.durationSec)) {
+    durationMs = Math.max(0, session.durationSec * 1000)
   } else if (typeof session.duration === 'number' && isFinite(session.duration)) {
     // If duration is provided in seconds or ms
     durationMs = Math.max(0, session.duration > 86400 ? session.duration : session.duration * 1000)
@@ -193,6 +202,8 @@ export function calculateDailyLoads(workouts = [], cardioActivities = [], days =
     days = typeof opts.days === 'number' ? opts.days : 28
   }
 
+  const fList = Array.isArray(opts.freestyleSessions) ? opts.freestyleSessions : []
+
   let dateStrings = []
 
   if (Array.isArray(days)) {
@@ -211,7 +222,7 @@ export function calculateDailyLoads(workouts = [], cardioActivities = [], days =
     } else {
       // Find latest date in data if historical
       let maxTs = 0
-      for (const item of [...wList, ...cList]) {
+      for (const item of [...wList, ...cList, ...fList]) {
         const dStr = sessionDate(item)
         if (dStr) {
           const t = new Date(dStr + 'T12:00:00').getTime()
@@ -250,8 +261,10 @@ export function calculateDailyLoads(workouts = [], cardioActivities = [], days =
       load: 0,
       workoutLoad: 0,
       cardioLoad: 0,
+      freestyleLoad: 0,
       workoutsCount: 0,
       cardioCount: 0,
+      freestyleCount: 0,
       sessions: []
     })
   }
@@ -282,6 +295,19 @@ export function calculateDailyLoads(workouts = [], cardioActivities = [], days =
     }
   }
 
+  // Accumulate flow & freestyle sessions
+  for (const f of fList) {
+    const dStr = sessionDate(f)
+    if (dStr && dayMap.has(dStr)) {
+      const load = typeof f.load === 'number' && isFinite(f.load) ? Math.max(0, f.load) : calculateSessionLoad(f, opts)
+      const day = dayMap.get(dStr)
+      day.load = Math.round((day.load + load) * 100) / 100
+      day.freestyleLoad = Math.round((day.freestyleLoad + load) * 100) / 100
+      day.freestyleCount++
+      day.sessions.push({ type: 'freestyle', session: f, load })
+    }
+  }
+
   const result = dateStrings.map(dStr => {
     const d = dayMap.get(dStr)
     return {
@@ -289,8 +315,10 @@ export function calculateDailyLoads(workouts = [], cardioActivities = [], days =
       load: d.load,
       workoutLoad: d.workoutLoad,
       cardioLoad: d.cardioLoad,
+      freestyleLoad: d.freestyleLoad,
       workoutsCount: d.workoutsCount,
       cardioCount: d.cardioCount,
+      freestyleCount: d.freestyleCount,
       sessions: d.sessions,
       valueOf() {
         return this.load
@@ -454,5 +482,41 @@ export function calculateACWR(dailyLoads, opts = {}) {
     toString() {
       return String(this.acwr)
     }
+  }
+}
+
+export function calculateTrainingRhythm(S, opts = {}) {
+  const workouts = Array.isArray(S?.workouts) ? S.workouts : []
+  const cardioActivities = Array.isArray(S?.cardioActivities) ? S.cardioActivities : []
+  const freestyleSessions = Array.isArray(S?.freestyleSessions) ? S.freestyleSessions : []
+  const dailyLoads = calculateDailyLoads(workouts, cardioActivities, 28, {
+    anchorToToday: true,
+    ...opts,
+    freestyleSessions
+  })
+  const acwr = calculateACWR(dailyLoads, {
+    acuteDays: 7,
+    chronicDays: 28,
+    fullChronicWindow: true,
+    ...opts
+  })
+
+  let statusLabel = 'Rest & Recovery'
+  if (dailyLoads.totalLoad > 0) {
+    if (acwr.riskZone === RISK_ZONES.OPTIMAL) statusLabel = 'Steady Rhythm'
+    else if (acwr.riskZone === RISK_ZONES.CAUTION) statusLabel = 'Building Load'
+    else if (acwr.riskZone === RISK_ZONES.DANGER) statusLabel = 'High Load'
+  }
+
+  return {
+    acwr: acwr.acwr,
+    acuteLoad: acwr.acuteLoad,
+    chronicLoad: acwr.chronicLoad,
+    acuteTotal: acwr.acuteTotal,
+    chronicTotal: acwr.chronicTotal,
+    totalLoad: dailyLoads.totalLoad,
+    zone: acwr.riskZone,
+    statusLabel,
+    dailyLoads
   }
 }

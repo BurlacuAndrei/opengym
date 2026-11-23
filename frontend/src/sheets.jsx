@@ -888,18 +888,31 @@ export const dayAssignSheet = day => ui().openSheet(close => <DayAssign day={day
 /* ============================ workout detail ============================ */
 function WorkoutDetail({ w, close }) {
   const st = useStore(s => s.S)
+  const isFreestyle = w.entryType === 'freestyle' || (!Array.isArray(w.entries) && (w.kind || w.durationMs || w.durationSec))
+  const durMs = w.durationMs || (w.durationSec ? w.durationSec * 1000 : ((w.end && w.start) ? w.end - w.start : 0))
+  const metaParts = [
+    fmtDate(w.d, true),
+    ...durPart(durMs),
+    ...(w.vol > 0 ? [fmtVol(w.vol, st.unit)] : []),
+    ...(w.bw ? [fmtNum(w.bw) + ' ' + st.unit] : []),
+    ...(w.rpe ? [`RPE ${w.rpe}`] : []),
+  ]
   return <>
-    <h3>{w.name}</h3>
-    <div className="muted small" style={{ marginBottom: 12 }}>{[fmtDate(w.d, true), ...durPart(w.end - w.start), fmtVol(w.vol, st.unit), ...(w.bw ? [fmtNum(w.bw) + ' ' + st.unit] : [])].join(' · ')}</div>
-    {w.entries.map((e, i) => {
+    <h3>{w.name || t(w.kind || 'Session')}</h3>
+    <div className="muted small" style={{ marginBottom: 12 }}>{metaParts.join(' · ')}</div>
+    {(w.entries || []).map((e, i) => {
       const ex = EXIDX[e.id]
       return <div key={i} className="row" style={{ marginBottom: 12, alignItems: 'flex-start' }}>
         {ex && <Thumb ex={ex} />}
         <div className="grow"><div className="tt capitalize" style={{ fontWeight: 600 }}>{ex ? ex.n : (e.n || e.id)} {w.prs && w.prs.includes(e.id) && <span className="pr"><Icon name="trophy" />PR</span>}</div>
-          <div className="ss">{e.sets.filter(s => s.done).map(s => setLabel(e.id, s, e.target)).join('  ·  ') || t('no sets')}</div></div>
+          <div className="ss">{(e.sets || []).filter(s => s.done).map(s => setLabel(e.id, s, e.target)).join('  ·  ') || t('no sets')}</div></div>
       </div>
     })}
-    <Button variant="danger" onClick={() => confirmSheet({ title: t('Delete workout?'), message: t('This removes it from your history for good.'), confirmText: t('Delete'), danger: true, onConfirm: () => { update(s => { s.workouts = s.workouts.filter(x => x.id !== w.id) }); close(); toast(t('Workout deleted')) } })}>{t('Delete workout')}</Button>
+    {isFreestyle ? (
+      <Button variant="danger" onClick={() => confirmSheet({ title: t('Delete session?'), message: t('This removes it from your history for good.'), confirmText: t('Delete'), danger: true, onConfirm: () => { update(s => { s.freestyleSessions = (s.freestyleSessions || []).filter(x => x.id !== w.id) }); close(); toast(t('Session deleted')) } })}>{t('Delete session')}</Button>
+    ) : (
+      <Button variant="danger" onClick={() => confirmSheet({ title: t('Delete workout?'), message: t('This removes it from your history for good.'), confirmText: t('Delete'), danger: true, onConfirm: () => { update(s => { s.workouts = s.workouts.filter(x => x.id !== w.id) }); close(); toast(t('Workout deleted')) } })}>{t('Delete workout')}</Button>
+    )}
   </>
 }
 export const workoutDetailSheet = w => ui().openSheet(close => <WorkoutDetail w={w} close={close} />)
@@ -909,13 +922,23 @@ export { Calendar }
 export const calendarSheet = start => ui().openSheet(close => <Calendar start={start} close={close} />)
 
 /* shared small workout row (used in lists) */
-export function WorkoutRow({ w, onClick }) {
+export function WorkoutRow({ w, onClick, badge }) {
   const st = useStore(s => s.S)
   const glyph = glyphOf((st.routines.find(r => r.id === w.routineId) || {}).emoji)
+  const durMs = w.durationMs || (w.durationSec ? w.durationSec * 1000 : ((w.end && w.start) ? w.end - w.start : 0))
+  const sets = setsDone(w)
+  const parts = [
+    fmtDate(w.d, true),
+    ...durPart(durMs),
+    ...(sets > 0 ? [t('{0} sets', sets)] : []),
+    ...(w.vol > 0 ? [fmtVol(w.vol, st.unit)] : []),
+  ]
+  const tint = w.pillar === 'flow' ? 'var(--pillar-flow)' : w.pillar === 'freestyle' ? 'var(--pillar-freestyle)' : 'var(--pillar-strength)'
   return <div className="item" onClick={onClick}>
-    <span className="lrow-i" style={{ width: 34, height: 34, borderRadius: 8, fontSize: 19 }}><Icon name={glyph} /></span>
-    <div className="grow"><div className="tt">{w.name}</div>
-      <div className="ss">{[fmtDate(w.d, true), ...durPart(w.end - w.start), t('{0} sets', setsDone(w)), fmtVol(w.vol, st.unit)].join(' · ')}</div></div>
+    <span className="lrow-i" style={{ width: 34, height: 34, borderRadius: 8, fontSize: 19, '--tint': tint }}><Icon name={glyph} /></span>
+    <div className="grow"><div className="tt">{w.name || t(w.kind || 'Session')}</div>
+      <div className="ss">{parts.join(' · ')}</div></div>
+    {badge}
     {w.prs && w.prs.length > 0 && <span className="pr"><Icon name="trophy" />{w.prs.length} PR</span>}
     <Icon name="chevronRight" className="chev" />
   </div>

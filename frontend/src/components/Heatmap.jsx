@@ -21,6 +21,15 @@ export default function Heatmap({ S, onDay }) {
     const durMin = Math.round((c.durationMs || 0) / 60000)
     a.min += Math.max(0, durMin)
   })
+  ;(S.freestyleSessions || []).forEach(f => {
+    const raw = f?.d || f?.date || f?.completedAt || f?.startTime
+    const d = typeof raw === 'string' && raw.length >= 10 ? raw.slice(0, 10) : (raw ? isoOf(new Date(raw)) : '')
+    if (!d) return
+    const a = agg[d] = agg[d] || { n: 0, vol: 0, min: 0 }
+    a.n++
+    const durMs = f.durationMs || (f.durationSec ? f.durationSec * 1000 : 0)
+    a.min += Math.max(0, Math.round(durMs / 60000))
+  })
   const mins = Object.values(agg).map(a => a.min).filter(v => v > 0).sort((a, b) => a - b)
   const q = p => (mins.length ? mins[Math.min(mins.length - 1, Math.floor(p * mins.length))] : 0)
   const t1 = q(0.25), t2 = q(0.5), t3 = q(0.75)

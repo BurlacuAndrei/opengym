@@ -6,17 +6,39 @@ import { fmtDate, fmtDur } from '../lib/format.js'
 import { fmtDist, fmtPace, formatSpeed, defaultRateMetric } from '../lib/cardio-format.js'
 import { unifiedHistory } from '../lib/history.js'
 import { WorkoutRow, workoutDetailSheet } from '../sheets.jsx'
-import { openManualCardioSheet } from '../components/ManualCardioSheet.jsx'
 import Icon from '../components/Icon.jsx'
 
+const PILLAR_META = {
+  strength: { label: 'Strength', cls: 'pillar-strength', tint: 'var(--pillar-strength)' },
+  cardio: { label: 'Cardio', cls: 'pillar-cardio', tint: 'var(--pillar-cardio)' },
+  flow: { label: 'Flow', cls: 'pillar-flow', tint: 'var(--pillar-flow)' },
+  freestyle: { label: 'Freestyle', cls: 'pillar-freestyle', tint: 'var(--pillar-freestyle)' }
+}
+
+const FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'strength', label: 'Strength' },
+  { id: 'cardio', label: 'Cardio' },
+  { id: 'flow', label: 'Flow & Sport' }
+]
+
+function cardioIcon(type) {
+  if (type === 'ride') return 'bike'
+  if (type === 'swim') return 'swim'
+  return 'figureRun'
+}
+
 export default function History() {
-  const nav = useNavigate()
-  const S = useStore(s => s.S)
+  let nav = () => {}
+  try {
+    nav = useNavigate()
+  } catch {}
+  const S = useStore(s => s.S) || {}
   const [filter, setFilter] = useState('all')
+  const normUnit = S.unit === 'lb' ? 'lbs' : (S.unit || 'kg')
 
   const items = unifiedHistory(S, filter)
-  const totalCount = (S.workouts || []).length + (S.cardioActivities || []).length
-  const hasCardio = !!(S.cardioActivities && S.cardioActivities.length)
+  const totalCount = (S.workouts || []).length + (S.cardioActivities || []).length + (S.freestyleSessions || []).length
 
   return <>
     <div className="hdr">
@@ -24,84 +46,100 @@ export default function History() {
       <div style={{ flex: 1, marginLeft: 12 }}>
         <h1>{t('History')}</h1>
         <div className="sub">
-          {hasCardio
-            ? t('{0} activities', totalCount)
-            : t(S.workouts.length === 1 ? '{0} workout' : '{0} workouts', S.workouts.length)}
+          {t(totalCount === 1 ? '{0} activity' : '{0} activities', totalCount)}
         </div>
       </div>
     </div>
 
-    {hasCardio && (
-      <div className="row" style={{ gap: 8, padding: '0 16px 12px 16px' }}>
+    <div className="chips" style={{ padding: '0 16px 12px 16px' }}>
+      {FILTERS.map(f => (
         <button
+          key={f.id}
           type="button"
-          className={'btn ' + (filter === 'all' ? 'primary' : 'plain')}
-          style={{ padding: '4px 12px', fontSize: 13, height: 28 }}
-          onClick={() => setFilter('all')}
+          className={'chip' + (filter === f.id ? ' on' : '')}
+          onClick={() => setFilter(f.id)}
         >
-          {t('All')}
+          {t(f.label)}
         </button>
-        <button
-          type="button"
-          className={'btn ' + (filter === 'workout' ? 'primary' : 'plain')}
-          style={{ padding: '4px 12px', fontSize: 13, height: 28 }}
-          onClick={() => setFilter('workout')}
-        >
-          {t('Workouts')}
-        </button>
-        <button
-          type="button"
-          className={'btn ' + (filter === 'cardio' ? 'primary' : 'plain')}
-          style={{ padding: '4px 12px', fontSize: 13, height: 28 }}
-          onClick={() => setFilter('cardio')}
-        >
-          {t('Cardio')}
-        </button>
-      </div>
-    )}
+      ))}
+    </div>
 
     {items.length ? (
       <div className="list">
         {items.map(item => {
+          const pMeta = PILLAR_META[item.pillar] || PILLAR_META.strength
+          const badge = <span className={`pillar-badge ${pMeta.cls}`}>{t(pMeta.label)}</span>
+
           if (item.entryType === 'cardio') {
-            const metric = defaultRateMetric(item.cardioType)
+            const cType = item.cardioType || item.type || item.sport || 'run'
+            const metric = defaultRateMetric(cType)
             const rateBadge = metric === 'speed'
-              ? (item.avgSpeedKmh ? formatSpeed(item.avgSpeedKmh, S.unit) : null)
-              : (item.avgPaceSecKm ? fmtPace(item.avgPaceSecKm, S.unit) : null)
+              ? (item.avgSpeedKmh ? formatSpeed(item.avgSpeedKmh, normUnit) : null)
+              : (item.avgPaceSecKm ? fmtPace(item.avgPaceSecKm, normUnit) : null)
 
             return (
               <div
                 key={item.id}
                 className="item"
-                onClick={() => openManualCardioSheet({ ...item, type: item.cardioType || item.sport || item.type })}
+                onClick={() => nav('/cardio/' + item.id)}
               >
-                <span className="lrow-i" style={{ width: 34, height: 34, borderRadius: 8, fontSize: 19 }}>
-                  <Icon name={item.cardioType === 'ride' ? 'bike' : 'figureRun'} />
+                <span className="lrow-i" style={{ width: 34, height: 34, borderRadius: 8, fontSize: 19, '--tint': pMeta.tint }}>
+                  <Icon name={cardioIcon(cType)} />
                 </span>
                 <div className="grow">
                   <div className="tt" style={{ textTransform: 'capitalize' }}>
-                    {t(item.cardioType || 'Cardio')}
+                    {item.name || t(cType || 'Cardio')}
                   </div>
                   <div className="ss">
                     {[
                       fmtDate(item.d, true),
                       fmtDur(item.durationMs),
-                      item.distanceM > 0 ? fmtDist(item.distanceM, S.unit) : null,
+                      item.distanceM > 0 ? fmtDist(item.distanceM, normUnit) : null,
                       rateBadge
                     ].filter(Boolean).join(' · ')}
                   </div>
                 </div>
+                {badge}
                 <Icon name="chevronRight" className="chev" />
               </div>
             )
           }
-          return <WorkoutRow key={item.id} w={item} onClick={() => workoutDetailSheet(item)} />
+
+          if (item.entryType === 'freestyle') {
+            const durMs = item.durationMs || (item.durationSec ? item.durationSec * 1000 : 0)
+            const icon = item.pillar === 'flow' ? 'stretch' : 'bolt'
+            return (
+              <div
+                key={item.id}
+                className="item"
+                onClick={() => workoutDetailSheet(item)}
+              >
+                <span className="lrow-i" style={{ width: 34, height: 34, borderRadius: 8, fontSize: 19, '--tint': pMeta.tint }}>
+                  <Icon name={icon} />
+                </span>
+                <div className="grow">
+                  <div className="tt">{item.name || t(item.kind || 'Freestyle')}</div>
+                  <div className="ss">
+                    {[
+                      fmtDate(item.d, true),
+                      durMs > 0 ? fmtDur(durMs) : null,
+                      item.rpe ? `RPE ${item.rpe}` : null
+                    ].filter(Boolean).join(' · ')}
+                  </div>
+                </div>
+                {badge}
+                <Icon name="chevronRight" className="chev" />
+              </div>
+            )
+          }
+
+          return <WorkoutRow key={item.id} w={item} badge={badge} onClick={() => workoutDetailSheet(item)} />
         })}
       </div>
     ) : (
       <div className="empty">
         <div className="ico"><Icon name="history" /></div>
-        {t(filter === 'cardio' ? 'No cardio activities yet.' : filter === 'workout' ? 'No workouts yet.' : 'No workouts yet.')}
+        {t(filter === 'cardio' ? 'No cardio activities yet.' : filter === 'flow' ? 'No flow or freestyle sessions yet.' : 'No workouts yet.')}
       </div>
     )}
   </>

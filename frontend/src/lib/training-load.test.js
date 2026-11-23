@@ -3,6 +3,7 @@ import {
   calculateSessionLoad,
   calculateDailyLoads,
   calculateACWR,
+  calculateTrainingRhythm,
   getRiskZone,
   sessionDate,
   RISK_ZONES,
@@ -331,5 +332,29 @@ describe('calculateACWR', () => {
     const res = calculateACWR(new Array(28).fill(100))
     expect(Number(res)).toBe(1.0)
     expect(res + 0.5).toBe(1.5)
+  })
+
+  it('aggregates freestyleSessions in calculateDailyLoads and calculateTrainingRhythm (Issue #97)', () => {
+    const today = new Date().toISOString().slice(0, 10)
+    const emptyRhythm = calculateTrainingRhythm({ workouts: [], cardioActivities: [], freestyleSessions: [] })
+    expect(emptyRhythm.totalLoad).toBe(0)
+    expect(emptyRhythm.acwr).toBe(0)
+    expect(emptyRhythm.statusLabel).toBe('Rest & Recovery')
+
+    const daily = calculateDailyLoads([], [], 7, {
+      endDate: today,
+      freestyleSessions: [{ d: today, durationSec: 1800, rpe: 6 }]
+    })
+    expect(daily.totalLoad).toBe(180)
+    expect(daily.byDate[today].freestyleLoad).toBe(180)
+    expect(daily.byDate[today].freestyleCount).toBe(1)
+
+    const rhythm = calculateTrainingRhythm({
+      workouts: [],
+      cardioActivities: [],
+      freestyleSessions: [{ completedAt: `${today}T10:00:00Z`, durationMs: 1800000, rpe: 6 }]
+    })
+    expect(rhythm.totalLoad).toBe(180)
+    expect(Number.isFinite(rhythm.acwr)).toBe(true)
   })
 })

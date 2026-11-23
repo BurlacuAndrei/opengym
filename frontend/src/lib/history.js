@@ -335,7 +335,7 @@ export function workoutVolume(w) {
 }
 export function setsDone(w) {
   let n = 0
-  w.entries.forEach(e => e.sets.forEach(s => { if (s.done) n++ }))
+  ;(w?.entries || []).forEach(e => (e?.sets || []).forEach(s => { if (s?.done) n++ }))
   return n
 }
 export function setsDoneActive(A) {
