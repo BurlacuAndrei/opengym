@@ -1,10 +1,20 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { useStore } from '../store/useStore.js'
+import { useStore, accumulateGearDistance } from '../store/useStore.js'
 import Icon from '../components/Icon.jsx'
-import { Button } from '../components/ui.jsx'
+import { Button, Switch } from '../components/ui.jsx'
 import RouteCanvas from '../components/RouteCanvas.jsx'
+import IntervalEditor from '../components/IntervalEditor.jsx'
+import { openManualCardioSheet } from '../components/ManualCardioSheet.jsx'
+import { openGpxImportDialog } from '../components/GpxImportDialog.jsx'
+import { dedupeRoutes } from './Library.jsx'
 import { t } from '../lib/i18n.js'
+import { todayISO } from '../lib/format.js'
+import { effectiveDaySessions } from '../lib/history.js'
+import { getCardioPlans, formatCardioTarget } from '../lib/cardio-plan.js'
+import { lazyFetchRoute } from '../lib/track-sync.js'
+import { createRouteFollower, formatOffCourseAlert } from '../lib/route-follower.js'
+import { MOBILE } from '../lib/mobile.js'
 import { useWakeLock } from '../lib/wakelock.js'
 import {
   RECORDING_STATUS,
@@ -26,6 +36,62 @@ import {
   speedUnit,
   formatElevation,
 } from '../lib/cardio-format.js'
+
+export const RECORDING_SPORTS = ['run', 'ride', 'walk', 'hike', 'swim', 'row']
+
+export function sportIcon(type) {
+  if (type === 'ride') return 'bike'
+  if (type === 'swim') return 'swim'
+  if (type === 'row') return 'bolt'
+  return 'figureRun'
+}
+
+export function gearCategoryForSport(sport) {
+  return sport === 'ride' ? 'bike' : 'shoe'
+}
+
+export function resolveDefaultGearForSport(gearList, sport) {
+  const active = (Array.isArray(gearList) ? gearList : []).filter(g => g && !g.retired)
+  if (active.length === 0) return ''
+  const cat = gearCategoryForSport(sport)
+  const matching = active.filter(g => g.type === cat)
+  const defMatch = matching.find(g => g.isDefault)
+  if (defMatch) return defMatch.id
+  if (matching.length > 0) return matching[0].id
+  const anyDef = active.find(g => g.isDefault)
+  return anyDef ? anyDef.id : ''
+}
+
+export function finalizeRecordingLinks(
+  activity,
+  {
+    selectedGearId = '',
+    selectedPlanId = '',
+    accumulateGearFn = accumulateGearDistance,
+    updateCardioActivityFn = null,
+    updateStoreFn = null,
+  } = {}
+) {
+  if (!activity) return
+  if (selectedGearId) {
+    if (activity.distanceM > 0 && typeof accumulateGearFn === 'function') {
+      accumulateGearFn(selectedGearId, activity.distanceM)
+    }
+    if (activity.id && typeof updateCardioActivityFn === 'function') {
+      updateCardioActivityFn(activity.id, { gearId: selectedGearId })
+    }
+  }
+  if (selectedPlanId && typeof updateStoreFn === 'function') {
+    updateStoreFn(s => {
+      if (!Array.isArray(s.cardioPlans)) return
+      const plan = s.cardioPlans.find(p => p && p.id === selectedPlanId)
+      if (plan) {
+        plan.completed = true
+        if (activity.id) plan.completedActivityId = activity.id
+      }
+    })
+  }
+}
 
 /**
  * Calculates GPS accuracy rating and display metadata.
@@ -117,11 +183,26 @@ export default function RecordingView({
   } catch {
     // Router context optional for testing/embedding
   }
-  const S = useStore(s => s.S)
-  const unit = S?.unit || 'kg'
+  const S = useStore(s => s.S) || {}
+  const update = useStore(s => s.update)
+  const updateCardioActivity = useStore(s => s.updateCardioActivity)
+  const unit = S?.unit === 'lb' ? 'lbs' : (S?.unit || 'kg')
 
   // Resolve recorder instance
   const rec = recorder || getCardioRecorder()
+
+  // Planned cardio, saved routes, and active gear resolution
+  const cardioPlans = getCardioPlans(S)
+  const todayPlannedCardio = effectiveDaySessions(S, todayISO()).cardioPlans.find(p => !p.completed) || null
+  const savedRoutes = dedupeRoutes(S)
+  const activeGear = (Array.isArray(S.gear) ? S.gear : []).filter(g => g && !g.retired)
+
+  const statePlanId = location?.state?.cardioPlanId || location?.state?.cardioPlan?.id || ''
+  const defaultPlanId = statePlanId || todayPlannedCardio?.id || ''
+
+  const searchParams = typeof location?.search === 'string' ? new URLSearchParams(location.search) : null
+  const queryRouteId = searchParams ? (searchParams.get('route') || '') : ''
+  const defaultRouteId = location?.state?.followRouteId || location?.state?.followRoute?.id || queryRouteId || ''
 
   // Interval Runner instance
   const initialSteps = intervalSteps || rec?.intervalSteps || null
@@ -140,8 +221,8 @@ export default function RecordingView({
   const [recState, setRecState] = useState(() => rec.getState())
   const [liveStats, setLiveStats] = useState(() => rec.getLiveStats())
   const [points, setPoints] = useState(() => (rec.points ? [...rec.points] : []))
-  const routeActivityType = location?.state?.activityType
-  const validRouteType = ['run', 'ride', 'walk', 'hike'].includes(routeActivityType)
+  const routeActivityType = location?.state?.activityType || location?.state?.cardioPlan?.type
+  const validRouteType = RECORDING_SPORTS.includes(routeActivityType)
     ? routeActivityType
     : null
   const [selectedType, setSelectedType] = useState(
@@ -149,6 +230,20 @@ export default function RecordingView({
       ? (recState?.activityType || 'run')
       : (validRouteType || initialActivityType || recState?.activityType || 'run')
   )
+  const [selectedPlanId, setSelectedPlanId] = useState(defaultPlanId)
+  const [customIntervalsOn, setCustomIntervalsOn] = useState(false)
+  const [customSteps, setCustomSteps] = useState([])
+  const [selectedRouteId, setSelectedRouteId] = useState(defaultRouteId)
+  const [followedRoutePoints, setFollowedRoutePoints] = useState(() =>
+    Array.isArray(location?.state?.followRoute?.points) ? location.state.followRoute.points : null
+  )
+  const routeFollowerRef = useRef(null)
+  const [routeStatus, setRouteStatus] = useState(null)
+  const [gearTouched, setGearTouched] = useState(false)
+  const [selectedGearId, setSelectedGearId] = useState(() =>
+    resolveDefaultGearForSport(S.gear, validRouteType || initialActivityType || 'run')
+  )
+  const gpxInputRef = useRef(null)
   const [finalizedActivity, setFinalizedActivity] = useState(null)
   const [isFinishing, setIsFinishing] = useState(false)
 
@@ -166,6 +261,50 @@ export default function RecordingView({
       setSelectedType(validRouteType)
     }
   }, [validRouteType, recState?.status])
+
+  // Keep default gear synced to sport until athlete picks manually
+  useEffect(() => {
+    if (!gearTouched && recState?.status === RECORDING_STATUS.IDLE) {
+      setSelectedGearId(resolveDefaultGearForSport(S.gear, selectedType))
+    }
+  }, [selectedType, gearTouched, S.gear, recState?.status])
+
+  // Load selected route track points & initialize RouteFollower
+  useEffect(() => {
+    let active = true
+    if (!selectedRouteId) {
+      setFollowedRoutePoints(null)
+      routeFollowerRef.current = null
+      setRouteStatus(null)
+      return () => { active = false }
+    }
+    const routeObj = savedRoutes.find(r => r.id === selectedRouteId) || location?.state?.followRoute
+    if (!routeObj) return () => { active = false }
+    if (Array.isArray(routeObj.points) && routeObj.points.length > 0) {
+      setFollowedRoutePoints(routeObj.points)
+      routeFollowerRef.current = createRouteFollower(routeObj.points, { offCourseThresholdMeters: 100 })
+      return () => { active = false }
+    }
+    lazyFetchRoute(routeObj).then(data => {
+      if (!active || !data) return
+      const pts = Array.isArray(data.points) ? data.points : (Array.isArray(data) ? data : [])
+      if (pts.length > 0) {
+        setFollowedRoutePoints(pts)
+        routeFollowerRef.current = createRouteFollower(pts, { offCourseThresholdMeters: 100 })
+      }
+    }).catch(() => {})
+    return () => { active = false }
+  }, [selectedRouteId])
+
+  // Update RouteFollower status as GPS points arrive
+  useEffect(() => {
+    if (!routeFollowerRef.current || !points.length) return
+    const lastPt = points[points.length - 1]
+    if (lastPt && typeof routeFollowerRef.current.update === 'function') {
+      const status = routeFollowerRef.current.update(lastPt)
+      setRouteStatus(status)
+    }
+  }, [points])
 
   // Subscribe to recorder state changes
   useEffect(() => {
@@ -256,9 +395,29 @@ export default function RecordingView({
       : `0 ${unit === 'lbs' ? 'ft' : 'm'}`
   const caloriesDisplay = `${liveStats?.calories || 0} kcal`
 
+  const selectedPlan = cardioPlans.find(p => p.id === selectedPlanId) || null
+
   // Action handlers
   const handleStart = async () => {
-    await (rec.startRecording ? rec.startRecording({ type: selectedType }) : defaultStartRecording({ type: selectedType }))
+    const activeSteps = customIntervalsOn && customSteps.length > 0
+      ? customSteps
+      : (selectedPlan?.intervals && selectedPlan.intervals.length > 0 ? selectedPlan.intervals : initialSteps)
+
+    if (!runnerRef.current && Array.isArray(activeSteps) && activeSteps.length > 0) {
+      runnerRef.current = createIntervalRunner({
+        steps: activeSteps,
+        adapter: rec?.adapter,
+        unit,
+        S,
+      })
+    }
+
+    const startOpts = {
+      type: selectedType,
+      ...(selectedGearId ? { gearId: selectedGearId } : {}),
+      ...(selectedPlanId ? { planId: selectedPlanId } : {}),
+    }
+    await (rec.startRecording ? rec.startRecording(startOpts) : defaultStartRecording(startOpts))
     if (runnerRef.current && runnerRef.current.status === 'idle') {
       await runnerRef.current.start(rec.getLiveStats ? rec.getLiveStats() : {})
       setRunnerTick(t => t + 1)
@@ -280,9 +439,20 @@ export default function RecordingView({
     setIsFinishing(true)
     try {
       const intervalSplits = runnerRef.current ? runnerRef.current.splits : null
+      const finishOpts = {
+        intervalSplits,
+        ...(selectedGearId ? { gearId: selectedGearId } : {}),
+      }
       const activity = rec.finishRecording
-        ? await rec.finishRecording({ intervalSplits })
-        : await defaultFinishRecording({ intervalSplits })
+        ? await rec.finishRecording(finishOpts)
+        : await defaultFinishRecording(finishOpts)
+      finalizeRecordingLinks(activity, {
+        selectedGearId,
+        selectedPlanId,
+        accumulateGearFn: accumulateGearDistance,
+        updateCardioActivityFn: updateCardioActivity,
+        updateStoreFn: update,
+      })
       setFinalizedActivity(activity)
     } catch (err) {
       console.error('Failed to finish recording:', err)
@@ -290,7 +460,7 @@ export default function RecordingView({
       setIsFinishing(false)
       setHoldProgress(0)
     }
-  }, [rec, isFinishing])
+  }, [rec, isFinishing, selectedGearId, selectedPlanId, updateCardioActivity, update])
 
   const handleDiscard = async () => {
     const confirmed =
@@ -449,10 +619,14 @@ export default function RecordingView({
   }
 
   // ---------------------------------------------------------------------------
-  // View 2: Idle Screen (Start Recording Chooser)
+  // View 2: Idle Screen (Pre-Start Cardio Recording Setup)
   // ---------------------------------------------------------------------------
   if (isIdle) {
-    const activityTypes = ['run', 'ride', 'walk', 'hike']
+    const handleGpxFile = ev => {
+      const file = ev.target.files?.[0]
+      ev.target.value = ''
+      if (file) openGpxImportDialog({ file })
+    }
     return (
       <div className="narrow recording-idle-view" data-testid="recording-idle">
         <div className="hdr">
@@ -463,38 +637,130 @@ export default function RecordingView({
         </div>
 
         <div className="card">
-          <h2 style={{ margin: '0 0 12px 0' }}>{t('Select Activity')}</h2>
+          <h2 style={{ margin: '0 0 10px 0' }}>{t('Select Activity')}</h2>
           <div
-            className="row"
+            data-testid="sport-selector"
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(2, 1fr)',
-              gap: 10,
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: 8,
               marginBottom: 16,
             }}
           >
-            {activityTypes.map(type => (
+            {RECORDING_SPORTS.map(type => (
               <button
                 key={type}
                 type="button"
+                data-testid={`sport-btn-${type}`}
                 className={`item ${selectedType === type ? 'selected' : ''}`}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 10,
-                  padding: 12,
+                  justifyContent: 'center',
+                  gap: 6,
+                  padding: '10px 8px',
                   borderRadius: 10,
-                  border: selectedType === type ? '2px solid var(--acc)' : '1px solid var(--border)',
-                  background: selectedType === type ? 'var(--surface-2)' : 'var(--surface-1)',
+                  border: selectedType === type ? '2px solid var(--acc)' : '1px solid var(--sep)',
+                  background: selectedType === type ? 'var(--surface-2)' : 'var(--surface)',
                   cursor: 'pointer',
-                  textAlign: 'left',
                 }}
                 onClick={() => setSelectedType(type)}
               >
-                <Icon name={type === 'ride' ? 'bike' : 'figureRun'} />
-                <span style={{ textTransform: 'capitalize', fontWeight: 600 }}>{t(type)}</span>
+                <Icon name={sportIcon(type)} />
+                <span style={{ textTransform: 'capitalize', fontWeight: 600, fontSize: 13 }}>{t(type)}</span>
               </button>
             ))}
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <div className="lbl2" style={{ marginBottom: 6 }}>{t('Planned Target / Intervals')}</div>
+            <select
+              data-testid="plan-selector"
+              value={selectedPlanId}
+              onChange={e => {
+                const pid = e.target.value
+                setSelectedPlanId(pid)
+                const matched = cardioPlans.find(p => p.id === pid)
+                if (matched?.type && RECORDING_SPORTS.includes(matched.type)) {
+                  setSelectedType(matched.type)
+                }
+              }}
+              style={{
+                width: '100%',
+                padding: '9px 12px',
+                borderRadius: 10,
+                border: '1px solid var(--sep)',
+                background: 'var(--surface-2)',
+                color: 'var(--label)',
+              }}
+            >
+              <option value="">{t('Free recording (no target)')}</option>
+              {cardioPlans.map(cp => (
+                <option key={cp.id} value={cp.id}>
+                  {formatCardioTarget(cp, unit)}{cp.completed ? ` (${t('Done')})` : ''}
+                </option>
+              ))}
+            </select>
+            <div className="row between" style={{ marginTop: 8 }}>
+              <span className="small muted">{t('Custom intervals')}</span>
+              <Switch checked={customIntervalsOn} onChange={setCustomIntervalsOn} />
+            </div>
+            {customIntervalsOn && (
+              <div style={{ marginTop: 8 }}>
+                <IntervalEditor steps={customSteps} onChange={setCustomSteps} unit={unit} />
+              </div>
+            )}
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <div className="lbl2" style={{ marginBottom: 6 }}>{t('Follow Route')}</div>
+            <select
+              data-testid="route-selector"
+              value={selectedRouteId}
+              onChange={e => setSelectedRouteId(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '9px 12px',
+                borderRadius: 10,
+                border: '1px solid var(--sep)',
+                background: 'var(--surface-2)',
+                color: 'var(--label)',
+              }}
+            >
+              <option value="">{t('None')}</option>
+              {savedRoutes.map(r => (
+                <option key={r.id} value={r.id}>
+                  {r.name || t('Unnamed Route')} ({fmtDist(r.distanceM || 0, unit)})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <div className="lbl2" style={{ marginBottom: 6 }}>{t('Active Gear')}</div>
+            <select
+              data-testid="gear-selector"
+              value={selectedGearId}
+              onChange={e => {
+                setGearTouched(true)
+                setSelectedGearId(e.target.value)
+              }}
+              style={{
+                width: '100%',
+                padding: '9px 12px',
+                borderRadius: 10,
+                border: '1px solid var(--sep)',
+                background: 'var(--surface-2)',
+                color: 'var(--label)',
+              }}
+            >
+              <option value="">{t('No gear selected')}</option>
+              {activeGear.map(g => (
+                <option key={g.id} value={g.id}>
+                  {g.name}{g.isDefault ? ` (${t('Default')})` : ''}
+                </option>
+              ))}
+            </select>
           </div>
 
           <Button
@@ -507,6 +773,35 @@ export default function RecordingView({
             {t('Start {0}', selectedType)}
           </Button>
         </div>
+
+        {!MOBILE && (
+          <div className="card" data-testid="web-fallback-banner">
+            <div className="row" style={{ gap: 10, marginBottom: 10 }}>
+              <span className="lrow-i" style={{ '--tint': 'var(--pillar-cardio)' }}>
+                <Icon name="globe" />
+              </span>
+              <div className="grow">
+                <div className="tt">{t('Browser GPS & Indoor Timer')}</div>
+                <div className="ss">{t('Web uses browser geolocation while open, or log indoor/outdoor cardio manually.')}</div>
+              </div>
+            </div>
+            <input
+              ref={gpxInputRef}
+              type="file"
+              accept=".gpx,application/gpx+xml,text/xml"
+              style={{ display: 'none' }}
+              onChange={handleGpxFile}
+            />
+            <div className="row" style={{ gap: 8 }}>
+              <Button style={{ flex: 1 }} icon="plus" onClick={() => openManualCardioSheet()}>
+                {t('Log Manual Cardio')}
+              </Button>
+              <Button style={{ flex: 1 }} icon="upload" onClick={() => gpxInputRef.current?.click()}>
+                {t('Import GPX')}
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -755,6 +1050,23 @@ export default function RecordingView({
         </div>
       </div>
 
+      {/* Off-route alert banner */}
+      {routeStatus?.isOffCourse && (
+        <div
+          className="card"
+          data-testid="off-route-banner"
+          style={{
+            padding: '10px 14px',
+            marginBottom: 12,
+            borderLeft: '4px solid var(--orange)',
+            color: 'var(--orange)',
+            fontWeight: 600,
+          }}
+        >
+          {formatOffCourseAlert(routeStatus.distanceFromRouteMeters)}
+        </div>
+      )}
+
       {/* Live Route Map Trail */}
       <div
         className="card"
@@ -769,6 +1081,9 @@ export default function RecordingView({
       >
         <RouteCanvas
           points={points}
+          referencePoints={followedRoutePoints}
+          currentPosition={points.length ? points[points.length - 1] : null}
+          isOffCourse={!!routeStatus?.isOffCourse}
           width={340}
           height={170}
           strokeColor="var(--acc, #3b82f6)"

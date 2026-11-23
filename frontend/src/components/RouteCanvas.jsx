@@ -80,12 +80,12 @@ export function getRouteBounds(points) {
  */
 export function normalizeRouteCoordinates(
   points,
-  { width = 300, height = 200, padding = 16 } = {}
+  { width = 300, height = 200, padding = 16, bounds: boundsOverride = null } = {}
 ) {
   const coords = (points || []).map(getCoord).filter(Boolean)
   if (!coords.length) return []
 
-  const bounds = getRouteBounds(coords)
+  const bounds = boundsOverride || getRouteBounds(coords)
   if (!bounds) return []
 
   // Single point or zero span: place at center
@@ -172,6 +172,8 @@ export function drawRouteOnCanvas(canvas, points, options = {}) {
     endColor = '#ef4444',   // Red dot for end
     dotRadius = 5,
     backgroundColor = null,
+    referencePoints = null,
+    referenceColor = 'rgba(148, 163, 184, 0.55)',
   } = options
 
   // Clear canvas
@@ -182,10 +184,40 @@ export function drawRouteOnCanvas(canvas, points, options = {}) {
     ctx.fillRect(0, 0, width, height)
   }
 
+  const hasRef = Array.isArray(referencePoints) && referencePoints.length > 0
+  const combinedBounds = hasRef
+    ? getRouteBounds([...(points || []), ...referencePoints])
+    : null
+
+  if (hasRef && combinedBounds) {
+    const refProj = normalizeRouteCoordinates(referencePoints, {
+      width,
+      height,
+      padding,
+      bounds: combinedBounds,
+    })
+    if (refProj.length >= 2) {
+      ctx.save()
+      ctx.beginPath()
+      ctx.strokeStyle = referenceColor
+      ctx.lineWidth = Math.max(2, lineWidth - 1)
+      ctx.setLineDash([6, 4])
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      ctx.moveTo(refProj[0].x, refProj[0].y)
+      for (let i = 1; i < refProj.length; i++) {
+        ctx.lineTo(refProj[i].x, refProj[i].y)
+      }
+      ctx.stroke()
+      ctx.restore()
+    }
+  }
+
   const projected = normalizeRouteCoordinates(points, {
     width,
     height,
     padding,
+    bounds: combinedBounds,
   })
 
   if (!projected.length) {
@@ -280,6 +312,8 @@ export function drawRouteOnCanvas(canvas, points, options = {}) {
  */
 export default function RouteCanvas({
   points = [],
+  referencePoints = null,
+  referenceColor = 'rgba(148, 163, 184, 0.55)',
   currentPosition = null,
   isOffCourse = false,
   width = 300,
@@ -318,9 +352,13 @@ export default function RouteCanvas({
       offCourseColor,
       dotRadius,
       backgroundColor,
+      referencePoints,
+      referenceColor,
     })
   }, [
     points,
+    referencePoints,
+    referenceColor,
     currentPosition,
     isOffCourse,
     width,
