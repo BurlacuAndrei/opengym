@@ -7,7 +7,7 @@
 //   3. Text-to-Speech (TTS) audio cues with music/audio ducking and stop controls.
 //   4. In-memory test fake (`createMemoryCardioAdapter`) for unit/integration testing.
 
-import { Capacitor } from '@capacitor/core'
+import { Capacitor, registerPlugin } from '@capacitor/core'
 import {
   createMemorySpeechAdapter,
   createNativeSpeechAdapter,
@@ -20,6 +20,15 @@ import {
 
 export const RECOVERY_LOG_PATH = 'opengym-cardio-recovery.log'
 export const DEFAULT_TRACKS_DIR = 'tracks'
+
+export function getBackgroundLocationPlugin() {
+  if (globalThis.__opengymBackgroundLocation !== undefined) {
+    return globalThis.__opengymBackgroundLocation
+  }
+  globalThis.__opengymBackgroundLocation =
+    typeof registerPlugin === 'function' ? registerPlugin('BackgroundLocation') : null
+  return globalThis.__opengymBackgroundLocation
+}
 
 /**
  * Normalizes track file paths by trimming, converting backslashes,
@@ -395,7 +404,33 @@ export function createNativeCardioAdapter(deps = {}) {
       }
 
       let nativeWatchId = null
-      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      let bgLocSubs = null
+      let activeBgLocPlugin = null
+      const useBackgroundLocation =
+        isNative &&
+        (Boolean(deps.backgroundLocation) ||
+          Boolean(Capacitor?.isPluginAvailable?.('BackgroundLocation')) ||
+          Capacitor?.getPlatform?.() === 'android')
+      const bgLocPlugin = useBackgroundLocation
+        ? (deps.backgroundLocation || getBackgroundLocationPlugin())
+        : null
+      if (bgLocPlugin && typeof bgLocPlugin.start === 'function') {
+        activeBgLocPlugin = bgLocPlugin
+        try {
+          const locSub = bgLocPlugin.addListener('location', fix => {
+            if (onFix) onFix(normalizeFix(fix))
+          })
+          const errSub = bgLocPlugin.addListener('locationError', err => {
+            if (onError) onError(new Error(err?.message || 'GPS error'))
+          })
+          bgLocSubs = [locSub, errSub]
+          Promise.resolve(bgLocPlugin.start()).catch(e => {
+            if (onError) onError(e)
+          })
+        } catch (e) {
+          if (onError) onError(e)
+        }
+      } else if (typeof navigator !== 'undefined' && navigator.geolocation) {
         try {
           nativeWatchId = navigator.geolocation.watchPosition(
             pos => {
@@ -423,7 +458,7 @@ export function createNativeCardioAdapter(deps = {}) {
         [Symbol.toPrimitive]: hint => (hint === 'number' ? watchId : String(watchId))
       }
 
-      watchers.set(watchId, { nativeWatchId, stop })
+      watchers.set(watchId, { nativeWatchId, bgLocSubs, bgLocPlugin: activeBgLocPlugin, stop })
       return handle
     },
 
@@ -438,6 +473,14 @@ export function createNativeCardioAdapter(deps = {}) {
       const id = (typeof target === 'object' && (target.watchId ?? target.id)) ? (target.watchId ?? target.id) : target
       const entry = watchers.get(id) || watchers.get(Number(id))
       if (entry) {
+        if (entry.bgLocSubs && entry.bgLocPlugin) {
+          for (const sub of entry.bgLocSubs) {
+            Promise.resolve(sub).then(h => h?.remove?.()).catch(() => {})
+          }
+          try {
+            Promise.resolve(entry.bgLocPlugin.stop?.()).catch(() => {})
+          } catch {}
+        }
         if (entry.nativeWatchId !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
           try {
             navigator.geolocation.clearWatch(entry.nativeWatchId)

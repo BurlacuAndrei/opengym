@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { Capacitor } from '@capacitor/core'
 import {
   createMemoryCardioAdapter,
   createNativeCardioAdapter,
+  getBackgroundLocationPlugin,
   getCardioAdapter,
   setCardioAdapter,
   normalizeTrackPath,
@@ -250,6 +252,129 @@ describe('cardio-adapter', () => {
       // TTS works
       await adapter.speak('Test prompt', { ducking: true })
       adapter.stopSpeaking()
+    })
+
+    it('uses backgroundLocation on Android native path and cleans up on stopWatcher', async () => {
+      const listeners = {}
+      const removeLoc = vi.fn()
+      const removeErr = vi.fn()
+      const backgroundLocation = {
+        start: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+        addListener: vi.fn((event, cb) => {
+          listeners[event] = cb
+          return Promise.resolve({ remove: event === 'location' ? removeLoc : removeErr })
+        })
+      }
+
+      const adapter = createNativeCardioAdapter({ isNative: true, backgroundLocation })
+      const onFix = vi.fn()
+      const onError = vi.fn()
+
+      const handle = adapter.startWatcher({}, onFix, onError)
+
+      expect(backgroundLocation.addListener).toHaveBeenCalledWith('location', expect.any(Function))
+      expect(backgroundLocation.addListener).toHaveBeenCalledWith('locationError', expect.any(Function))
+      expect(backgroundLocation.start).toHaveBeenCalledTimes(1)
+
+      listeners.location({ latitude: 47.3769, longitude: 8.5417, speed: 3.4 })
+      expect(onFix).toHaveBeenCalledWith(expect.objectContaining({
+        latitude: 47.3769,
+        longitude: 8.5417,
+        speed: 3.4,
+        coords: expect.objectContaining({ latitude: 47.3769, longitude: 8.5417 })
+      }))
+
+      listeners.locationError({ message: 'Signal lost' })
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Signal lost' }))
+
+      expect(adapter.stopWatcher(handle)).toBe(true)
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(removeLoc).toHaveBeenCalledTimes(1)
+      expect(removeErr).toHaveBeenCalledTimes(1)
+      expect(backgroundLocation.stop).toHaveBeenCalledTimes(1)
+    })
+
+    it('falls back to navigator.geolocation.watchPosition on non-Android native platforms', () => {
+      const watchPosition = vi.fn(() => 77)
+      const clearWatch = vi.fn()
+      const origGeoDescriptor = Object.getOwnPropertyDescriptor(navigator, 'geolocation')
+      Object.defineProperty(navigator, 'geolocation', {
+        configurable: true,
+        value: { watchPosition, clearWatch }
+      })
+      const platformSpy = vi.spyOn(Capacitor, 'getPlatform').mockReturnValue('ios')
+      const availSpy = vi.spyOn(Capacitor, 'isPluginAvailable').mockReturnValue(false)
+
+      try {
+        const adapter = createNativeCardioAdapter({ isNative: true })
+        const onFix = vi.fn()
+        const handle = adapter.startWatcher({ enableHighAccuracy: true }, onFix)
+
+        expect(watchPosition).toHaveBeenCalledTimes(1)
+        const [successCb] = watchPosition.mock.calls[0]
+        successCb({ coords: { latitude: 47.38, longitude: 8.55, speed: 2.5 } })
+        expect(onFix).toHaveBeenCalledWith(expect.objectContaining({
+          latitude: 47.38,
+          longitude: 8.55
+        }))
+
+        expect(adapter.stopWatcher(handle)).toBe(true)
+        expect(clearWatch).toHaveBeenCalledWith(77)
+      } finally {
+        platformSpy.mockRestore()
+        availSpy.mockRestore()
+        if (origGeoDescriptor) {
+          Object.defineProperty(navigator, 'geolocation', origGeoDescriptor)
+        } else {
+          delete navigator.geolocation
+        }
+      }
+    })
+  })
+
+  describe('getBackgroundLocationPlugin', () => {
+    it('caches plugin on globalThis across module resets without duplicate registration', async () => {
+      const hadCached = '__opengymBackgroundLocation' in globalThis
+      const prevCached = globalThis.__opengymBackgroundLocation
+      delete globalThis.__opengymBackgroundLocation
+
+      const fakePlugin = { start: vi.fn(), stop: vi.fn(), addListener: vi.fn() }
+      const registerPluginSpy = vi.fn(() => fakePlugin)
+
+      try {
+        vi.resetModules()
+        vi.doMock('@capacitor/core', () => ({
+          Capacitor: { isNativePlatform: () => false },
+          registerPlugin: registerPluginSpy
+        }))
+        const mod1 = await import('./cardio-adapter.js')
+        const first = mod1.getBackgroundLocationPlugin()
+
+        vi.resetModules()
+        vi.doMock('@capacitor/core', () => ({
+          Capacitor: { isNativePlatform: () => false },
+          registerPlugin: registerPluginSpy
+        }))
+        const mod2 = await import('./cardio-adapter.js')
+        const second = mod2.getBackgroundLocationPlugin()
+
+        expect(registerPluginSpy).toHaveBeenCalledTimes(1)
+        expect(first).toBe(fakePlugin)
+        expect(second).toBe(first)
+        expect(globalThis.__opengymBackgroundLocation).toBe(fakePlugin)
+        expect(typeof getBackgroundLocationPlugin).toBe('function')
+      } finally {
+        vi.doUnmock('@capacitor/core')
+        vi.resetModules()
+        if (hadCached) {
+          globalThis.__opengymBackgroundLocation = prevCached
+        } else {
+          delete globalThis.__opengymBackgroundLocation
+        }
+      }
     })
   })
 
