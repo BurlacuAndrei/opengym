@@ -188,6 +188,16 @@ export function fmtPace(pace, unit = 'kg', options = {}) {
   return `${timeStr} ${paceUnit(unit)}`
 }
 
+/**
+ * Formats a pace stored in seconds per kilometer (avgPaceSecKm) into the user's unit.
+ */
+export function fmtPaceSec(secPerKm, unit = 'kg', options = {}) {
+  const normUnit = unit === 'lb' ? 'lbs' : (unit || 'kg')
+  const paceMin = paceFromSeconds(secPerKm, METERS_PER_KM, normUnit)
+  if (!paceMin) return ''
+  return fmtPace(paceMin, normUnit, options)
+}
+
 /** Formats speed with unit: "10 km/h" or "6.2 mph". */
 export function formatSpeed(speed, unit = 'kg') {
   if (speed == null || speed === '' || isNaN(Number(speed))) return ''

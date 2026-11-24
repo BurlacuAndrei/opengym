@@ -929,4 +929,10 @@ export default {
   "Could not recover cardio activity": "Could not recover cardio activity",
   "Restore & Save": "恢复并保存",
   "Recovery log discarded": "已丢弃恢复日志",
+  "Location permission denied": "位置权限被拒绝",
+  "Open Settings": "打开设置",
+  "Open Settings → Permissions → Location to allow location access for GPS cardio, or log cardio manually.": "请打开“设置”→“权限”→“位置信息”以允许 GPS 有氧运动访问位置，或手动记录有氧运动。",
+  "Enable location access in your browser site settings to record GPS cardio, or log cardio manually.": "请在浏览器网站设置中开启位置权限以记录 GPS 有氧运动，或手动记录有氧运动。",
+  "GPS unavailable": "GPS 不可用",
+  "Could not start GPS tracking on this device. Try again or log cardio manually.": "无法在此设备上启动 GPS 追踪。请重试或手动记录有氧运动。",
 }

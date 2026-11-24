@@ -6,6 +6,10 @@ import {
   DEFAULT_SHOE_MAX_DISTANCE_M,
   DEFAULT_BIKE_MAX_DISTANCE_M,
   normalizeGearItem,
+  isGearRetired,
+  getActiveGear,
+  gearCategoryForSport,
+  resolveDefaultGearForSport,
   isGearDueRetirement,
   getGearWearPercent,
   accumulateGearDistance,
@@ -83,9 +87,59 @@ describe('Gear Mileage Tracker (Issue #54)', () => {
       expect(item.maxDistanceM).toBe(400000)
       expect(item.distanceM).toBe(50000)
     })
+
+    it('normalizeGearItem honors legacy retired flag', () => {
+      expect(normalizeGearItem({ name: 'Legacy Shoe', retired: true }).isRetired).toBe(true)
+    })
   })
 
   describe('Retirement Checks & Wear Calculation', () => {
+    it('isGearRetired and getActiveGear handle isRetired, retired, mixed flags, and null/undefined', () => {
+      expect(isGearRetired({ isRetired: true })).toBe(true)
+      expect(isGearRetired({ retired: true })).toBe(true)
+      expect(isGearRetired({ isRetired: false, retired: true })).toBe(true)
+      expect(isGearRetired({ isRetired: true, retired: false })).toBe(true)
+      expect(isGearRetired({ isRetired: false, retired: false })).toBe(false)
+      expect(isGearRetired(null)).toBe(false)
+      expect(isGearRetired(undefined)).toBe(false)
+      expect(isGearRetired('shoe')).toBe(false)
+
+      const active = { id: 'a1', name: 'Active', isRetired: false }
+      const list = [
+        active,
+        { id: 'r1', isRetired: true },
+        { id: 'r2', retired: true },
+        { id: 'r3', isRetired: false, retired: true },
+        null,
+        undefined
+      ]
+      expect(getActiveGear(list)).toEqual([active])
+      expect(getActiveGear(null)).toEqual([])
+      expect(getActiveGear(undefined)).toEqual([])
+    })
+
+    it('gearCategoryForSport and resolveDefaultGearForSport resolve active defaults by sport', () => {
+      expect(gearCategoryForSport('ride')).toBe('bike')
+      expect(gearCategoryForSport('run')).toBe('shoe')
+      expect(gearCategoryForSport('walk')).toBe('shoe')
+      expect(gearCategoryForSport('hike')).toBe('shoe')
+
+      const gear = [
+        null,
+        { id: 'r1', name: 'Retired Default', type: 'shoe', isDefault: true, isRetired: true },
+        { id: 'r2', name: 'Legacy Retired', type: 'shoe', isDefault: true, retired: true },
+        { id: 's1', name: 'Trainer', type: 'shoe', isDefault: false, isRetired: false },
+        { id: 's2', name: 'Racer', type: 'shoe', isDefault: true, isRetired: false },
+        { id: 'b1', name: 'Road Bike', type: 'bike', isDefault: false, isRetired: false }
+      ]
+      expect(resolveDefaultGearForSport(gear, 'run')).toBe('s2')
+      expect(resolveDefaultGearForSport(gear, 'ride')).toBe('b1')
+      // Falls back to any active default if no gear matches category
+      expect(resolveDefaultGearForSport([{ id: 's2', type: 'shoe', isDefault: true }], 'ride')).toBe('s2')
+      expect(resolveDefaultGearForSport([{ id: 's1', type: 'shoe', isDefault: false }], 'ride')).toBe('')
+      expect(resolveDefaultGearForSport([], 'run')).toBe('')
+      expect(resolveDefaultGearForSport(null, 'run')).toBe('')
+    })
     it('isGearDueRetirement returns true when distance reaches or exceeds maxDistanceM', () => {
       const shoe = { id: 's1', type: 'shoe', distanceM: 800000, maxDistanceM: 800000, isRetired: false }
       expect(isGearDueRetirement(shoe)).toBe(true)
@@ -102,6 +156,8 @@ describe('Gear Mileage Tracker (Issue #54)', () => {
     it('isGearDueRetirement returns false when gear is already retired', () => {
       const retiredShoe = { id: 's1', type: 'shoe', distanceM: 900000, maxDistanceM: 800000, isRetired: true }
       expect(isGearDueRetirement(retiredShoe)).toBe(false)
+      const legacyRetiredShoe = { id: 's2', type: 'shoe', distanceM: 900000, maxDistanceM: 800000, retired: true }
+      expect(isGearDueRetirement(legacyRetiredShoe)).toBe(false)
     })
 
     it('getGearWearPercent calculates correct wear percentage up to 100', () => {
@@ -185,6 +241,29 @@ describe('Gear Mileage Tracker (Issue #54)', () => {
       const retired = retireGear(created.id, set, get)
       expect(retired.isRetired).toBe(true)
       expect(state.S.gear[0].isRetired).toBe(true)
+    })
+
+    it('updateGear clears stale retired key when reactivating with isRetired: false', () => {
+      let state = { S: { gear: [{ id: 'g1', name: 'Old Shoe', isRetired: true, retired: true }] } }
+      const set = vi.fn(next => {
+        state = typeof next === 'function' ? next(state) : next
+      })
+      const get = () => state
+
+      const reactivated = updateGear('g1', { isRetired: false }, set, get)
+      expect(reactivated.isRetired).toBe(false)
+      expect('retired' in reactivated).toBe(false)
+      expect('retired' in state.S.gear[0]).toBe(false)
+
+      // Also clears across state-signature and store update() branches
+      const directState = { S: { gear: [{ id: 'g2', isRetired: true, retired: true }] } }
+      const directRes = updateGear(directState, 'g2', { isRetired: false })
+      expect('retired' in directRes).toBe(false)
+
+      storeAddGear({ id: 'g3', name: 'Store Shoe', isRetired: true, retired: true })
+      const storeRes = storeUpdateGear('g3', { isRetired: false })
+      expect(storeRes.isRetired).toBe(false)
+      expect('retired' in storeRes).toBe(false)
     })
   })
 
@@ -337,6 +416,25 @@ describe('Gear Mileage Tracker (Issue #54)', () => {
       expect(inlineHtml).not.toContain('Gear Tracker')
       expect(inlineHtml).toContain('Default')
       expect(inlineHtml).toContain('Set default')
+    })
+
+    it('renders sm button classes and counts both isRetired and retired items in Retired tab', () => {
+      const html = renderToStaticMarkup(
+        React.createElement(GearManager, {
+          gear: [
+            { id: 'a1', name: 'Active Shoe', type: 'shoe', distanceM: 1000, maxDistanceM: 800000, isRetired: false },
+            { id: 'r1', name: 'Retired Canonical', type: 'shoe', distanceM: 1000, maxDistanceM: 800000, isRetired: true },
+            { id: 'r2', name: 'Retired Legacy', type: 'shoe', distanceM: 1000, maxDistanceM: 800000, retired: true },
+            { id: 'r3', name: 'Retired Mixed', type: 'shoe', distanceM: 1000, maxDistanceM: 800000, isRetired: false, retired: true }
+          ],
+          unit: 'kg'
+        })
+      )
+      expect(html).toContain('Active (1)')
+      expect(html).toContain('Retired (3)')
+      expect(html).toContain('btn primary sm')
+      expect(html).toContain('btn plain sm')
+      expect(html).not.toContain('small')
     })
   })
 })

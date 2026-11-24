@@ -15,9 +15,25 @@ export const MOBILE = import.meta.env.VITE_MOBILE === '1'
 
 const FILE = 'opengym-state.json'
 
+let fsMod = null
+let fsPromise = null
+
+async function loadFs() {
+  if (!MOBILE) return null
+  if (fsMod) return fsMod
+  if (!fsPromise) {
+    fsPromise = import('@capacitor/filesystem')
+      .then(m => { fsMod = m; return m })
+      .catch(e => { fsPromise = null; throw e })
+  }
+  return fsPromise
+}
+
 export async function nativeLoad() {
   try {
-    const { Filesystem, Directory, Encoding } = await import('@capacitor/filesystem')
+    const fs = await loadFs()
+    if (!fs) return null
+    const { Filesystem, Directory, Encoding } = fs
     const r = await Filesystem.readFile({ path: FILE, directory: Directory.Data, encoding: Encoding.UTF8 })
     return JSON.parse(r.data)
   } catch (e) { return null }   // first launch, or unreadable — localStorage copy takes over
@@ -25,7 +41,9 @@ export async function nativeLoad() {
 
 export async function nativeSave(state) {
   try {
-    const { Filesystem, Directory, Encoding } = await import('@capacitor/filesystem')
+    const fs = await loadFs()
+    if (!fs) return
+    const { Filesystem, Directory, Encoding } = fs
     await Filesystem.writeFile({ path: FILE, directory: Directory.Data, data: JSON.stringify(state), encoding: Encoding.UTF8 })
   } catch (e) { /* keep the localStorage copy */ }
 }

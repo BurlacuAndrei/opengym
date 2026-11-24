@@ -929,4 +929,10 @@ export default {
   "Could not recover cardio activity": "Could not recover cardio activity",
   "Restore & Save": "복구 및 저장",
   "Recovery log discarded": "복구 로그 삭제됨",
+  "Location permission denied": "위치 권한이 거부됨",
+  "Open Settings": "설정 열기",
+  "Open Settings → Permissions → Location to allow location access for GPS cardio, or log cardio manually.": "설정 → 권한 → 위치를 열어 GPS 유산소 기록을 위한 위치 액세스를 허용하거나, 유산소를 수동으로 기록하세요.",
+  "Enable location access in your browser site settings to record GPS cardio, or log cardio manually.": "GPS 유산소를 기록하려면 브라우저 사이트 설정에서 위치 액세스를 허용하거나, 유산소를 수동으로 기록하세요.",
+  "GPS unavailable": "GPS를 사용할 수 없음",
+  "Could not start GPS tracking on this device. Try again or log cardio manually.": "이 기기에서 GPS 추적을 시작할 수 없습니다. 다시 시도하거나 유산소를 수동으로 기록하세요.",
 }

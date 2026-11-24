@@ -57,6 +57,19 @@ export const RECORDING_STATUS = {
 }
 
 /**
+ * Returns true if a GPS watcher error prevents recording from continuing.
+ *
+ * @param {*} err - Error object or string
+ * @returns {boolean}
+ */
+export function isFatalGpsError(err) {
+  if (!err) return false
+  if (err.fatal === true || err.code === 1) return true
+  const msg = typeof err === 'string' ? err : (err.message || '')
+  return /permission|denied|not allowed|not supported|failed to start/i.test(msg)
+}
+
+/**
  * Default live metrics structure.
  */
 export const DEFAULT_LIVE_STATS = Object.freeze({
@@ -317,6 +330,7 @@ export class CardioRecorder {
     if (options.weightKg) this.weightKg = options.weightKg
 
     this.id = options.id || uid()
+    const sessionId = this.id
     this.activityType = options.type || options.activityType || 'run'
     this.startTime = options.startTime
       ? (typeof options.startTime === 'string' ? options.startTime : new Date(options.startTime).toISOString())
@@ -351,15 +365,53 @@ export class CardioRecorder {
       distanceFilter: 3,
     }
 
+    let startingWatcher = true
+    let hasDeferredError = false
+    let deferredError = null
+    let handlingError = false
+
+    const isSessionActive = () =>
+      this.id === sessionId &&
+      (this.status === RECORDING_STATUS.RECORDING || this.status === RECORDING_STATUS.PAUSED)
+
+    const handleWatcherError = async err => {
+      if (!isSessionActive()) return
+      if (isFatalGpsError(err)) {
+        if (handlingError) return
+        handlingError = true
+        await this.discardRecording()
+      }
+      if (typeof options.onError === 'function') {
+        options.onError(err)
+      }
+    }
+
     this.watchHandle = this.adapter.startWatcher(
       watcherOpts,
-      fix => this.onFix(fix),
+      fix => {
+        if (!isSessionActive()) return
+        this.onFix(fix)
+      },
       err => {
-        if (typeof options.onError === 'function') {
-          options.onError(err)
+        if (startingWatcher) {
+          if (!hasDeferredError) {
+            hasDeferredError = true
+            deferredError = err
+          }
+          return
         }
+        handleWatcherError(err)
       }
     )
+    startingWatcher = false
+
+    if (hasDeferredError) {
+      await handleWatcherError(deferredError)
+    }
+
+    if (!isSessionActive()) {
+      return this.getState()
+    }
 
     this._notify()
     return this.getState()
@@ -572,7 +624,10 @@ export class CardioRecorder {
     }
 
     // 8. If store is provided or set, log activity
-    const targetStore = options.store || this.store
+    const rawStore = options.store || this.store
+    const targetStore = rawStore && typeof rawStore.logCardioActivity === 'function'
+      ? rawStore
+      : (rawStore && typeof rawStore.getState === 'function' ? rawStore.getState() : null)
     if (targetStore && typeof targetStore.logCardioActivity === 'function') {
       try {
         targetStore.logCardioActivity(activity)
@@ -606,6 +661,9 @@ export class CardioRecorder {
       this.watchHandle = null
     }
 
+    this.status = RECORDING_STATUS.IDLE
+    this.id = null
+
     const adapter = this.adapter || getCardioAdapter()
     try {
       await adapter.clearRecoveryLog()
@@ -613,8 +671,6 @@ export class CardioRecorder {
       console.warn('CardioRecorder discard clearRecoveryLog error:', err)
     }
 
-    this.status = RECORDING_STATUS.IDLE
-    this.id = null
     this.startTime = null
     this.startedAtMs = null
     this.pausedAtMs = null

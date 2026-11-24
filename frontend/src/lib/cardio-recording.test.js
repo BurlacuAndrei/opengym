@@ -2,10 +2,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   RECORDING_STATUS,
   DEFAULT_LIVE_STATS,
+  isFatalGpsError,
   compactTrackPoints,
   calculateLiveStats,
   CardioRecorder,
   createCardioRecorder,
+  getCardioRecorder,
+  setCardioStore,
   startRecording,
   pauseRecording,
   resumeRecording,
@@ -23,6 +26,7 @@ import {
 
 import {
   createMemoryCardioAdapter,
+  createNativeCardioAdapter,
   setCardioAdapter,
   getCardioAdapter,
 } from './cardio-adapter.js'
@@ -466,6 +470,37 @@ describe('Cardio Recording Lifecycle (Issue #53)', () => {
       expect(mockStore.logCardioActivity).toHaveBeenCalledTimes(1)
       expect(mockStore.logCardioActivity.mock.calls[0][0].id).toBe('store-test-act')
     })
+
+    it('unwraps Zustand-style store hooks via getState() for options.store and setCardioStore', async () => {
+      const logCardioActivity = vi.fn()
+      const zustandLikeStore = { getState: () => ({ logCardioActivity }) }
+
+      const recorder = createCardioRecorder({ adapter })
+      await recorder.startRecording({ id: 'zustand-opt-act' })
+      await adapter.simulateFix({ latitude: 47.37, longitude: 8.54, timestamp: 1710000000000 })
+
+      await recorder.finishRecording({ store: zustandLikeStore })
+      expect(logCardioActivity).toHaveBeenCalledTimes(1)
+      expect(logCardioActivity.mock.calls[0][0].id).toBe('zustand-opt-act')
+
+      // Retroactively bind and reset on singleton getCardioRecorder()
+      const singleton = getCardioRecorder()
+      setCardioStore(zustandLikeStore)
+      expect(singleton.store).toBe(zustandLikeStore)
+
+      await singleton.startRecording({ id: 'zustand-global-act' })
+      await adapter.simulateFix({ latitude: 47.37, longitude: 8.54, timestamp: 1710000001000 })
+      await singleton.finishRecording()
+      expect(logCardioActivity).toHaveBeenCalledTimes(2)
+      expect(logCardioActivity.mock.calls[1][0].id).toBe('zustand-global-act')
+
+      setCardioStore(null)
+      expect(singleton.store).toBeNull()
+      await singleton.startRecording({ id: 'zustand-reset-act' })
+      await adapter.simulateFix({ latitude: 47.37, longitude: 8.54, timestamp: 1710000002000 })
+      await singleton.finishRecording()
+      expect(logCardioActivity).toHaveBeenCalledTimes(2)
+    })
   })
 
   describe('6. Subscriptions and event notifications', () => {
@@ -531,6 +566,154 @@ describe('Cardio Recording Lifecycle (Issue #53)', () => {
       const finished = await finishRecording()
       expect(finished.id).toBe('singleton-act-1')
       expect(isIdle()).toBe(true)
+    })
+  })
+
+  describe('8. GPS watcher fatal vs non-fatal error handling (Issue #8)', () => {
+    it('classifies fatal permission/startup errors vs transient GPS errors via isFatalGpsError', () => {
+      expect(isFatalGpsError({ fatal: true })).toBe(true)
+      expect(isFatalGpsError({ code: 1, message: 'User denied Geolocation' })).toBe(true)
+      expect(isFatalGpsError('Permission denied')).toBe(true)
+      expect(isFatalGpsError(new Error('Not allowed'))).toBe(true)
+      expect(isFatalGpsError(new Error('Geolocation is not supported on this platform'))).toBe(true)
+      expect(isFatalGpsError(new Error('Failed to start foreground location service'))).toBe(true)
+
+      expect(isFatalGpsError(null)).toBe(false)
+      expect(isFatalGpsError({ code: 2, message: 'Position unavailable' })).toBe(false)
+      expect(isFatalGpsError({ code: 3, message: 'Timeout' })).toBe(false)
+      expect(isFatalGpsError(new Error('Signal lost'))).toBe(false)
+    })
+
+    it('cleans up session, stops plugin, clears recovery log, and invokes onError when bgLocPlugin.start() rejects asynchronously', async () => {
+      const removeLoc = vi.fn()
+      const removeErr = vi.fn()
+      const backgroundLocation = {
+        start: vi.fn().mockRejectedValue(new Error('Location permission denied')),
+        stop: vi.fn().mockResolvedValue(undefined),
+        addListener: vi.fn(event =>
+          Promise.resolve({ remove: event === 'location' ? removeLoc : removeErr })
+        ),
+      }
+
+      const nativeAdapter = createNativeCardioAdapter({ isNative: true, backgroundLocation })
+      const mem = createMemoryCardioAdapter()
+      nativeAdapter.appendRecoveryLog = mem.appendRecoveryLog.bind(mem)
+      nativeAdapter.readRecoveryLog = mem.readRecoveryLog.bind(mem)
+      nativeAdapter.clearRecoveryLog = mem.clearRecoveryLog.bind(mem)
+      const clearSpy = vi.spyOn(nativeAdapter, 'clearRecoveryLog')
+      const recorder = createCardioRecorder({ adapter: nativeAdapter })
+      const onError = vi.fn()
+      const states = []
+      recorder.subscribe(s => states.push(s.status))
+
+      await recorder.startRecording({ id: 'async-deny', onError })
+      await new Promise(resolve => setTimeout(resolve, 10))
+
+      expect(onError).toHaveBeenCalledTimes(1)
+      expect(onError.mock.calls[0][0]).toEqual(
+        expect.objectContaining({ fatal: true, message: 'Location permission denied' })
+      )
+      expect(recorder.isIdle).toBe(true)
+      expect(recorder.getState().id).toBeNull()
+      expect(backgroundLocation.stop).toHaveBeenCalledTimes(1)
+      expect(clearSpy).toHaveBeenCalledTimes(2)
+      expect(await nativeAdapter.readRecoveryLog()).toHaveLength(0)
+      expect(states[states.length - 1]).toBe(RECORDING_STATUS.IDLE)
+    })
+
+    it('defers synchronous fatal watcher error until watchHandle is assigned, skips RECORDING notify, and discards once', async () => {
+      const handle = { watchId: 42, stop: vi.fn() }
+      const stopWatcher = vi.fn()
+      const clearRecoveryLog = vi.fn().mockResolvedValue(true)
+      const appendRecoveryLog = vi.fn().mockResolvedValue(true)
+      const syncErr = new Error('Geolocation is not supported on this platform')
+      syncErr.fatal = true
+
+      const syncFailAdapter = {
+        startWatcher: vi.fn((opts, _onFix, onErr) => {
+          onErr(syncErr)
+          onErr(syncErr)
+          return handle
+        }),
+        stopWatcher,
+        clearRecoveryLog,
+        appendRecoveryLog,
+      }
+
+      const recorder = createCardioRecorder({ adapter: syncFailAdapter })
+      const listener = vi.fn()
+      recorder.subscribe(listener)
+      const onError = vi.fn()
+
+      const result = await recorder.startRecording({ id: 'sync-fail', onError })
+
+      expect(result.status).toBe(RECORDING_STATUS.IDLE)
+      expect(result.id).toBeNull()
+      expect(stopWatcher).toHaveBeenCalledTimes(1)
+      expect(stopWatcher).toHaveBeenCalledWith(handle)
+      expect(clearRecoveryLog).toHaveBeenCalledTimes(2)
+      expect(onError).toHaveBeenCalledTimes(1)
+      expect(onError).toHaveBeenCalledWith(syncErr)
+      expect(listener.mock.calls.some(([snap]) => snap.status === RECORDING_STATUS.RECORDING)).toBe(false)
+      expect(listener.mock.calls.pop()[0].status).toBe(RECORDING_STATUS.IDLE)
+    })
+
+    it('keeps recording active on non-fatal code 2 and code 3 errors while forwarding to onError', async () => {
+      const recorder = createCardioRecorder({ adapter })
+      const onError = vi.fn()
+
+      await recorder.startRecording({ id: 'non-fatal-gps', onError })
+
+      adapter.simulateError({ code: 2, message: 'Position unavailable' })
+      adapter.simulateError({ code: 3, message: 'Timeout' })
+      await Promise.resolve()
+
+      expect(onError).toHaveBeenCalledTimes(2)
+      expect(recorder.isRecording).toBe(true)
+
+      await adapter.simulateFix({ latitude: 47.37, longitude: 8.54, timestamp: 1710000000000 })
+      expect(recorder.points).toHaveLength(1)
+
+      await recorder.discardRecording()
+    })
+
+    it('ignores stale onFix and onError callbacks from a superseded or finished session', async () => {
+      const captured = []
+      const customAdapter = {
+        startWatcher: vi.fn((_opts, onFixCb, onErrCb) => {
+          captured.push({ onFixCb, onErrCb })
+          return { watchId: captured.length }
+        }),
+        stopWatcher: vi.fn(),
+        writeTrack: vi.fn().mockResolvedValue(true),
+        clearRecoveryLog: vi.fn().mockResolvedValue(true),
+        appendRecoveryLog: vi.fn().mockResolvedValue(true),
+      }
+
+      const recorder = createCardioRecorder({ adapter: customAdapter })
+      const onErr1 = vi.fn()
+      const onErr2 = vi.fn()
+
+      await recorder.startRecording({ id: 'sess-1', onError: onErr1 })
+      await recorder.discardRecording()
+      await recorder.startRecording({ id: 'sess-2', onError: onErr2 })
+
+      // Fire stale session 1 callbacks while session 2 is active
+      captured[0].onFixCb({ latitude: 47.37, longitude: 8.54, timestamp: 1710000000000 })
+      captured[0].onErrCb({ code: 1, message: 'Permission denied' })
+      await Promise.resolve()
+
+      expect(recorder.isRecording).toBe(true)
+      expect(recorder.getState().id).toBe('sess-2')
+      expect(recorder.points).toHaveLength(0)
+      expect(onErr1).not.toHaveBeenCalled()
+      expect(onErr2).not.toHaveBeenCalled()
+
+      // Finish session 2 and fire session 2 callback while IDLE
+      await recorder.finishRecording()
+      captured[1].onErrCb({ code: 1, message: 'Permission denied' })
+      await Promise.resolve()
+      expect(onErr2).not.toHaveBeenCalled()
     })
   })
 })

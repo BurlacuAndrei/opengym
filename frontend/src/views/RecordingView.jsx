@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { Capacitor } from '@capacitor/core'
+import { App as CapApp } from '@capacitor/app'
 import { useStore, accumulateGearDistance } from '../store/useStore.js'
 import Icon from '../components/Icon.jsx'
 import { Button, Switch } from '../components/ui.jsx'
@@ -13,11 +15,19 @@ import { todayISO } from '../lib/format.js'
 import { effectiveDaySessions } from '../lib/history.js'
 import { getCardioPlans, formatCardioTarget } from '../lib/cardio-plan.js'
 import { lazyFetchRoute } from '../lib/track-sync.js'
+import { getActiveGear, gearCategoryForSport, resolveDefaultGearForSport } from '../lib/gear.js'
 import { createRouteFollower, formatOffCourseAlert } from '../lib/route-follower.js'
+import { speakCardioCue } from '../lib/cardio-tts.js'
 import { MOBILE } from '../lib/mobile.js'
 import { useWakeLock } from '../lib/wakelock.js'
 import {
+  canOpenLocationSettings,
+  openLocationSettings,
+  checkLocationPermission,
+} from '../lib/cardio-adapter.js'
+import {
   RECORDING_STATUS,
+  isFatalGpsError,
   getCardioRecorder,
   startRecording as defaultStartRecording,
   pauseRecording as defaultPauseRecording,
@@ -29,6 +39,7 @@ import { createIntervalRunner } from '../lib/interval-runner.js'
 import {
   fmtDist,
   formatPace,
+  fmtPaceSec,
   formatSpeed,
   convertDistance,
   convertSpeed,
@@ -46,34 +57,21 @@ export function sportIcon(type) {
   return 'figureRun'
 }
 
-export function gearCategoryForSport(sport) {
-  return sport === 'ride' ? 'bike' : 'shoe'
-}
-
-export function resolveDefaultGearForSport(gearList, sport) {
-  const active = (Array.isArray(gearList) ? gearList : []).filter(g => g && !g.retired)
-  if (active.length === 0) return ''
-  const cat = gearCategoryForSport(sport)
-  const matching = active.filter(g => g.type === cat)
-  const defMatch = matching.find(g => g.isDefault)
-  if (defMatch) return defMatch.id
-  if (matching.length > 0) return matching[0].id
-  const anyDef = active.find(g => g.isDefault)
-  return anyDef ? anyDef.id : ''
-}
+export { gearCategoryForSport, resolveDefaultGearForSport }
 
 export function finalizeRecordingLinks(
   activity,
   {
     selectedGearId = '',
     selectedPlanId = '',
+    gearAlreadyApplied = false,
     accumulateGearFn = accumulateGearDistance,
     updateCardioActivityFn = null,
     updateStoreFn = null,
   } = {}
 ) {
   if (!activity) return
-  if (selectedGearId) {
+  if (selectedGearId && !gearAlreadyApplied) {
     if (activity.distanceM > 0 && typeof accumulateGearFn === 'function') {
       accumulateGearFn(selectedGearId, activity.distanceM)
     }
@@ -136,6 +134,25 @@ export function getGpsAccuracyStatus(accuracy) {
   }
 }
 
+export function formatGpsError(err, { canOpenSettings = canOpenLocationSettings() } = {}) {
+  const msg = typeof err === 'string' ? err : (err?.message || '')
+  const isPermission = err?.code === 1 || /permission|denied|not allowed/i.test(msg)
+  if (isPermission) {
+    return {
+      title: t('Location permission denied'),
+      message: canOpenSettings
+        ? t('Open Settings → Permissions → Location to allow location access for GPS cardio, or log cardio manually.')
+        : t('Enable location access in your browser site settings to record GPS cardio, or log cardio manually.'),
+      isPermission: true,
+    }
+  }
+  return {
+    title: t('GPS unavailable'),
+    message: t('Could not start GPS tracking on this device. Try again or log cardio manually.'),
+    isPermission: false,
+  }
+}
+
 /**
  * Formats duration milliseconds into "m:ss" or "h:mm:ss" clock display.
  *
@@ -153,6 +170,140 @@ export function formatDurationClock(ms) {
     return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
   }
   return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+export const FOLLOW_STATE_ROUTE_ID = '__follow_route__'
+
+function getExplicitRouteId(location) {
+  const searchParams = typeof location?.search === 'string' ? new URLSearchParams(location.search) : null
+  const queryRouteId = searchParams ? (searchParams.get('route') || '') : ''
+  return location?.state?.followRouteId || location?.state?.followRoute?.id || queryRouteId || ''
+}
+
+/**
+ * Resolves initial selected route ID from URL query or navigation state.
+ *
+ * @param {Object|null} location
+ * @returns {string}
+ */
+export function resolveInitialRouteId(location) {
+  const explicitId = getExplicitRouteId(location)
+  if (explicitId) return explicitId
+  const followRoute = location?.state?.followRoute
+  if (followRoute && Array.isArray(followRoute.points) && followRoute.points.length > 0) {
+    return FOLLOW_STATE_ROUTE_ID
+  }
+  return ''
+}
+
+/**
+ * Resolves initial route points from savedRoutes or navigation followRoute state.
+ *
+ * @param {string} selectedRouteId
+ * @param {Array} savedRoutes
+ * @param {Object|null} followRouteState
+ * @returns {Array|null}
+ */
+export function resolveFollowRoute(selectedRouteId, savedRoutes, followRouteState) {
+  const routes = Array.isArray(savedRoutes) ? savedRoutes : []
+  if (!selectedRouteId) {
+    return null
+  }
+  const saved = routes.find(r => r && r.id === selectedRouteId)
+  if (Array.isArray(saved?.points) && saved.points.length > 0) {
+    return saved.points
+  }
+  if (
+    followRouteState &&
+    (!followRouteState.id || followRouteState.id === selectedRouteId) &&
+    Array.isArray(followRouteState.points) &&
+    followRouteState.points.length > 0
+  ) {
+    return followRouteState.points
+  }
+  return null
+}
+
+/**
+ * Resolves both target route metadata object and direct points for a selected route ID.
+ * Only passes location.state.followRoute when it explicitly matches selectedRouteId.
+ *
+ * @param {string} selectedRouteId
+ * @param {Array} savedRoutes
+ * @param {Object|null} location
+ * @returns {{ routeObj: Object|null, points: Array|null }}
+ */
+export function resolveFollowRouteTarget(selectedRouteId, savedRoutes, location) {
+  if (!selectedRouteId) {
+    return { routeObj: null, points: null }
+  }
+  const routes = Array.isArray(savedRoutes) ? savedRoutes : []
+  const followRouteState = location?.state?.followRoute || null
+  const explicitId = getExplicitRouteId(location)
+  const matchingFollowState =
+    followRouteState &&
+    (followRouteState.id === selectedRouteId ||
+      (!followRouteState.id && selectedRouteId === (explicitId || FOLLOW_STATE_ROUTE_ID)))
+      ? followRouteState
+      : null
+  const routeObj = routes.find(r => r && r.id === selectedRouteId) || matchingFollowState
+  const points = resolveFollowRoute(selectedRouteId, routes, matchingFollowState)
+  return { routeObj, points }
+}
+
+/**
+ * Evaluates current GPS position against a RouteFollower instance.
+ *
+ * @param {Object|null} follower
+ * @param {Array} points
+ * @returns {Object|null}
+ */
+export function evaluateRouteFollower(follower, points) {
+  if (!follower || !Array.isArray(points) || !points.length) {
+    if (follower && typeof follower.reset === 'function') {
+      follower.reset()
+    }
+    return null
+  }
+  const lastPt = points[points.length - 1]
+  if (!lastPt || typeof follower.updatePosition !== 'function') {
+    return null
+  }
+  return follower.updatePosition(lastPt)
+}
+
+/**
+ * Creates a RouteFollower configured with live recording TTS gating and throttle reset when paused/idle.
+ *
+ * @param {Array} pts
+ * @param {Function|Object} getDeps
+ * @returns {Object}
+ */
+export function createRecordingRouteFollower(pts, getDeps) {
+  let follower = null
+  follower = createRouteFollower(pts, {
+    offCourseThresholdMeters: 100,
+    speak: (text, opts) => {
+      const { rec, S, recStatus } =
+        (typeof getDeps === 'function' ? getDeps() : getDeps) || {}
+      if (recStatus !== RECORDING_STATUS.RECORDING) {
+        follower?.resetAlertThrottle?.()
+        return
+      }
+      try {
+        Promise.resolve(
+          speakCardioCue(text, {
+            adapter: rec?.adapter,
+            S,
+            duck: S?.voiceDucking === false ? false : (opts?.duck !== false),
+          })
+        ).catch(() => {})
+      } catch {
+        // Ignore TTS errors
+      }
+    },
+  })
+  return follower
 }
 
 /**
@@ -174,6 +325,7 @@ export default function RecordingView({
   initialActivityType = 'run',
   intervalSteps = null,
   intervalRunner = null,
+  initialFinalizedActivity = null,
 }) {
   let navigate = () => {}
   let location = null
@@ -195,14 +347,19 @@ export default function RecordingView({
   const cardioPlans = getCardioPlans(S)
   const todayPlannedCardio = effectiveDaySessions(S, todayISO()).cardioPlans.find(p => !p.completed) || null
   const savedRoutes = dedupeRoutes(S)
-  const activeGear = (Array.isArray(S.gear) ? S.gear : []).filter(g => g && !g.retired)
+  const activeGear = getActiveGear(S.gear)
 
   const statePlanId = location?.state?.cardioPlanId || location?.state?.cardioPlan?.id || ''
   const defaultPlanId = statePlanId || todayPlannedCardio?.id || ''
 
-  const searchParams = typeof location?.search === 'string' ? new URLSearchParams(location.search) : null
-  const queryRouteId = searchParams ? (searchParams.get('route') || '') : ''
-  const defaultRouteId = location?.state?.followRouteId || location?.state?.followRoute?.id || queryRouteId || ''
+  const defaultRouteId = resolveInitialRouteId(location)
+  const initialFollowTarget = resolveFollowRouteTarget(defaultRouteId, savedRoutes, location)
+  const extraFollowOption =
+    defaultRouteId &&
+    initialFollowTarget.routeObj &&
+    !savedRoutes.some(r => r && r.id === defaultRouteId)
+      ? { ...initialFollowTarget.routeObj, id: defaultRouteId }
+      : null
 
   // Interval Runner instance
   const initialSteps = intervalSteps || rec?.intervalSteps || null
@@ -235,17 +392,33 @@ export default function RecordingView({
   const [customSteps, setCustomSteps] = useState([])
   const [selectedRouteId, setSelectedRouteId] = useState(defaultRouteId)
   const [followedRoutePoints, setFollowedRoutePoints] = useState(() =>
-    Array.isArray(location?.state?.followRoute?.points) ? location.state.followRoute.points : null
+    initialFollowTarget.points
   )
   const routeFollowerRef = useRef(null)
-  const [routeStatus, setRouteStatus] = useState(null)
+  const lastRouteEvalRef = useRef({ follower: null, point: null })
+  const latestRouteDepsRef = useRef({ rec, S, recStatus: recState?.status })
+  latestRouteDepsRef.current = { rec, S, recStatus: recState?.status }
+  const [routeStatus, setRouteStatus] = useState(() => {
+    if (
+      recState?.status === RECORDING_STATUS.IDLE ||
+      !Array.isArray(followedRoutePoints) ||
+      !followedRoutePoints.length ||
+      !points.length
+    ) {
+      return null
+    }
+    const follower = createRouteFollower(followedRoutePoints, { offCourseThresholdMeters: 100 })
+    return evaluateRouteFollower(follower, points)
+  })
   const [gearTouched, setGearTouched] = useState(false)
   const [selectedGearId, setSelectedGearId] = useState(() =>
     resolveDefaultGearForSport(S.gear, validRouteType || initialActivityType || 'run')
   )
   const gpxInputRef = useRef(null)
-  const [finalizedActivity, setFinalizedActivity] = useState(null)
+  const [finalizedActivity, setFinalizedActivity] = useState(initialFinalizedActivity)
   const [isFinishing, setIsFinishing] = useState(false)
+  const [gpsError, setGpsError] = useState(null)
+  const [isStarting, setIsStarting] = useState(false)
 
   // Long press finish state
   const [holdProgress, setHoldProgress] = useState(0)
@@ -269,42 +442,68 @@ export default function RecordingView({
     }
   }, [selectedType, gearTouched, S.gear, recState?.status])
 
+  const makeFollower = useCallback(
+    pts => createRecordingRouteFollower(pts, () => latestRouteDepsRef.current),
+    []
+  )
+
   // Load selected route track points & initialize RouteFollower
   useEffect(() => {
     let active = true
-    if (!selectedRouteId) {
+    const clearRouteFollow = () => {
       setFollowedRoutePoints(null)
       routeFollowerRef.current = null
+      lastRouteEvalRef.current = { follower: null, point: null }
       setRouteStatus(null)
+    }
+    const { routeObj, points: directPts } = resolveFollowRouteTarget(
+      selectedRouteId,
+      savedRoutes,
+      location
+    )
+    if (!selectedRouteId || !routeObj) {
+      clearRouteFollow()
       return () => { active = false }
     }
-    const routeObj = savedRoutes.find(r => r.id === selectedRouteId) || location?.state?.followRoute
-    if (!routeObj) return () => { active = false }
-    if (Array.isArray(routeObj.points) && routeObj.points.length > 0) {
-      setFollowedRoutePoints(routeObj.points)
-      routeFollowerRef.current = createRouteFollower(routeObj.points, { offCourseThresholdMeters: 100 })
+    if (directPts) {
+      routeFollowerRef.current = makeFollower(directPts)
+      setFollowedRoutePoints(directPts)
       return () => { active = false }
     }
+    clearRouteFollow()
     lazyFetchRoute(routeObj).then(data => {
       if (!active || !data) return
       const pts = Array.isArray(data.points) ? data.points : (Array.isArray(data) ? data : [])
       if (pts.length > 0) {
+        routeFollowerRef.current = makeFollower(pts)
         setFollowedRoutePoints(pts)
-        routeFollowerRef.current = createRouteFollower(pts, { offCourseThresholdMeters: 100 })
       }
     }).catch(() => {})
     return () => { active = false }
-  }, [selectedRouteId])
+  }, [selectedRouteId, makeFollower])
 
   // Update RouteFollower status as GPS points arrive
   useEffect(() => {
-    if (!routeFollowerRef.current || !points.length) return
-    const lastPt = points[points.length - 1]
-    if (lastPt && typeof routeFollowerRef.current.update === 'function') {
-      const status = routeFollowerRef.current.update(lastPt)
-      setRouteStatus(status)
+    const follower = routeFollowerRef.current
+    const recStatus = recState?.status
+    if (!follower || !points.length || recStatus === RECORDING_STATUS.IDLE) {
+      if (follower && typeof follower.reset === 'function') {
+        follower.reset()
+      }
+      lastRouteEvalRef.current = { follower: null, point: null }
+      setRouteStatus(null)
+      return
     }
-  }, [points])
+    const lastPt = points[points.length - 1]
+    if (
+      lastRouteEvalRef.current.follower === follower &&
+      lastRouteEvalRef.current.point === lastPt
+    ) {
+      return
+    }
+    lastRouteEvalRef.current = { follower, point: lastPt }
+    setRouteStatus(evaluateRouteFollower(follower, points))
+  }, [points, followedRoutePoints, recState?.status])
 
   // Subscribe to recorder state changes
   useEffect(() => {
@@ -312,6 +511,9 @@ export default function RecordingView({
       setRecState({ ...state })
       setLiveStats({ ...state.liveStats })
       setPoints(rec.points ? [...rec.points] : [])
+      if (state.status === RECORDING_STATUS.RECORDING && state.pointsCount > 0) {
+        setGpsError(null)
+      }
       if (runnerRef.current && state.status === RECORDING_STATUS.RECORDING) {
         runnerRef.current.update(state.liveStats).then(() => setRunnerTick(t => t + 1))
       }
@@ -349,6 +551,65 @@ export default function RecordingView({
       }
     }
   }, [])
+
+  // Auto-clear permission error banner if user grants location permission in OS/browser settings
+  const hasPermissionError = Boolean(gpsError?.isPermission)
+  useEffect(() => {
+    if (!hasPermissionError) return
+    let active = true
+    let checking = false
+
+    const recheckPermission = async () => {
+      if (!active || checking) return
+      checking = true
+      try {
+        const granted = await checkLocationPermission()
+        if (granted && active) {
+          setGpsError(prev => (prev?.isPermission ? null : prev))
+        }
+      } catch {
+        // Ignore transient permission check failures on resume
+      } finally {
+        checking = false
+      }
+    }
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        recheckPermission()
+      }
+    }
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibilityChange)
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', recheckPermission)
+    }
+
+    let resumeListener = null
+    if (Capacitor?.isNativePlatform?.() || typeof document !== 'undefined') {
+      try {
+        resumeListener = Promise.resolve(CapApp?.addListener?.('resume', recheckPermission))
+        resumeListener.catch(() => {})
+      } catch {
+        // Ignore unavailable Capacitor App listener
+      }
+    }
+
+    return () => {
+      active = false
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibilityChange)
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', recheckPermission)
+      }
+      if (resumeListener) {
+        resumeListener.then(handle => handle?.remove?.()).catch(() => {})
+      }
+    }
+  }, [hasPermissionError])
 
   // Activity type and status derived values
   const activityType =
@@ -398,7 +659,32 @@ export default function RecordingView({
   const selectedPlan = cardioPlans.find(p => p.id === selectedPlanId) || null
 
   // Action handlers
+  const handleGpsError = useCallback(async (err, forceFatal = false) => {
+    if (!forceFatal && !isFatalGpsError(err)) return
+    const status = rec.getState?.()?.status
+    if (status && status !== RECORDING_STATUS.IDLE) {
+      try {
+        if (rec.discardRecording) await rec.discardRecording()
+        else await defaultDiscardRecording()
+      } catch {
+        // Ignore cleanup errors during fatal GPS failure
+      }
+    }
+    if (!intervalRunner) {
+      runnerRef.current = null
+    }
+    rec.adapter?.stopSpeaking?.()
+    setGpsError(formatGpsError(err))
+  }, [rec, intervalRunner])
+
+  const handleOpenSettings = useCallback(async () => {
+    await openLocationSettings()
+  }, [])
+
   const handleStart = async () => {
+    if (isStarting) return
+    setIsStarting(true)
+    setGpsError(null)
     const activeSteps = customIntervalsOn && customSteps.length > 0
       ? customSteps
       : (selectedPlan?.intervals && selectedPlan.intervals.length > 0 ? selectedPlan.intervals : initialSteps)
@@ -414,13 +700,21 @@ export default function RecordingView({
 
     const startOpts = {
       type: selectedType,
+      onError: handleGpsError,
       ...(selectedGearId ? { gearId: selectedGearId } : {}),
       ...(selectedPlanId ? { planId: selectedPlanId } : {}),
     }
-    await (rec.startRecording ? rec.startRecording(startOpts) : defaultStartRecording(startOpts))
-    if (runnerRef.current && runnerRef.current.status === 'idle') {
-      await runnerRef.current.start(rec.getLiveStats ? rec.getLiveStats() : {})
-      setRunnerTick(t => t + 1)
+    try {
+      const nextState = await (rec.startRecording ? rec.startRecording(startOpts) : defaultStartRecording(startOpts))
+      const activeStatus = nextState?.status ?? rec.getState?.()?.status
+      if (activeStatus === RECORDING_STATUS.RECORDING && runnerRef.current && runnerRef.current.status === 'idle') {
+        await runnerRef.current.start(rec.getLiveStats ? rec.getLiveStats() : {})
+        setRunnerTick(t => t + 1)
+      }
+    } catch (err) {
+      await handleGpsError(err, true)
+    } finally {
+      setIsStarting(false)
     }
   }
 
@@ -446,9 +740,20 @@ export default function RecordingView({
       const activity = rec.finishRecording
         ? await rec.finishRecording(finishOpts)
         : await defaultFinishRecording(finishOpts)
+      const storeApi = useStore.getState?.()
+      let persisted = activity?.id
+        ? (storeApi?.S?.cardioActivities || []).find(a => a && a.id === activity.id)
+        : null
+      if (!persisted && activity?.id && typeof storeApi?.logCardioActivity === 'function') {
+        persisted = storeApi.logCardioActivity({
+          ...activity,
+          ...(selectedGearId && !activity.gearId ? { gearId: selectedGearId } : {}),
+        })
+      }
       finalizeRecordingLinks(activity, {
         selectedGearId,
         selectedPlanId,
+        gearAlreadyApplied: Boolean(selectedGearId && persisted?.gearId === selectedGearId),
         accumulateGearFn: accumulateGearDistance,
         updateCardioActivityFn: updateCardioActivity,
         updateStoreFn: update,
@@ -524,11 +829,8 @@ export default function RecordingView({
     const summaryStats = finalizedActivity.summary || finalizedActivity.liveStats || liveStats
     const summaryDistance = fmtDist(finalizedActivity.distanceM || summaryStats.distanceM || 0, unit)
     const summaryDuration = formatDurationClock(finalizedActivity.durationMs || summaryStats.movingTimeMs || 0)
-    const summaryRate = finalizedActivity.avgPaceSecKm
-      ? formatPace(finalizedActivity.avgPaceSecKm / 60, unit)
-      : finalizedActivity.avgSpeedKmh
-      ? formatSpeed(finalizedActivity.avgSpeedKmh, unit)
-      : rateDisplay
+    const summaryRate = fmtPaceSec(finalizedActivity.avgPaceSecKm, unit)
+      || (finalizedActivity.avgSpeedKmh ? formatSpeed(finalizedActivity.avgSpeedKmh, unit) : rateDisplay)
 
     return (
       <div className="narrow recording-summary-view" data-testid="recording-summary">
@@ -627,6 +929,7 @@ export default function RecordingView({
       ev.target.value = ''
       if (file) openGpxImportDialog({ file })
     }
+    const showOpenSettings = Boolean(gpsError?.isPermission && canOpenLocationSettings())
     return (
       <div className="narrow recording-idle-view" data-testid="recording-idle">
         <div className="hdr">
@@ -635,6 +938,64 @@ export default function RecordingView({
             <div className="sub">{t('GPS-tracked workout')}</div>
           </div>
         </div>
+
+        {gpsError && (
+          <div
+            role="alert"
+            className="card"
+            data-testid="recording-error-banner"
+            style={{
+              border: '1px solid var(--red)',
+              background: 'var(--surface)',
+              marginBottom: 14,
+            }}
+          >
+            <div className="row" style={{ gap: 10, marginBottom: 10, alignItems: 'flex-start' }}>
+              <span className="lrow-i" style={{ '--tint': 'var(--red)', color: 'var(--red)' }}>
+                <Icon name="info" />
+              </span>
+              <div className="grow">
+                <div style={{ fontWeight: 600, color: 'var(--label)', marginBottom: 2 }}>
+                  {gpsError.title}
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--label-2)', lineHeight: 1.4 }}>
+                  {gpsError.message}
+                </div>
+              </div>
+            </div>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              {showOpenSettings && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon="gear"
+                  data-testid="open-settings-btn"
+                  style={{ minHeight: 44, minWidth: 44 }}
+                  onClick={handleOpenSettings}
+                >
+                  {t('Open Settings')}
+                </Button>
+              )}
+              <Button
+                variant={showOpenSettings ? 'secondary' : 'tinted'}
+                size={showOpenSettings ? 'sm' : undefined}
+                icon="plus"
+                style={{ flex: 1, minHeight: 44 }}
+                onClick={() => openManualCardioSheet()}
+              >
+                {t('Log Manual Cardio')}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                style={{ minHeight: 44, minWidth: 44 }}
+                onClick={() => setGpsError(null)}
+              >
+                {t('Dismiss')}
+              </Button>
+            </div>
+          </div>
+        )}
 
         <div className="card">
           <h2 style={{ margin: '0 0 10px 0' }}>{t('Select Activity')}</h2>
@@ -728,6 +1089,12 @@ export default function RecordingView({
               }}
             >
               <option value="">{t('None')}</option>
+              {extraFollowOption && (
+                <option value={extraFollowOption.id}>
+                  {extraFollowOption.name || t('Unnamed Route')}
+                  {extraFollowOption.distanceM ? ` (${fmtDist(extraFollowOption.distanceM, unit)})` : ''}
+                </option>
+              )}
               {savedRoutes.map(r => (
                 <option key={r.id} value={r.id}>
                   {r.name || t('Unnamed Route')} ({fmtDist(r.distanceM || 0, unit)})
@@ -767,6 +1134,7 @@ export default function RecordingView({
             variant="primary"
             icon="play"
             data-testid="start-recording-btn"
+            disabled={isStarting}
             style={{ width: '100%', height: 52, fontSize: 16 }}
             onClick={handleStart}
           >
@@ -1063,7 +1431,7 @@ export default function RecordingView({
             fontWeight: 600,
           }}
         >
-          {formatOffCourseAlert(routeStatus.distanceFromRouteMeters)}
+          {formatOffCourseAlert(routeStatus.crossTrackDistance)}
         </div>
       )}
 

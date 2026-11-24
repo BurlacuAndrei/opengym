@@ -4,6 +4,9 @@ import {
   createMemoryCardioAdapter,
   createNativeCardioAdapter,
   getBackgroundLocationPlugin,
+  canOpenLocationSettings,
+  openLocationSettings,
+  checkLocationPermission,
   getCardioAdapter,
   setCardioAdapter,
   normalizeTrackPath,
@@ -409,6 +412,50 @@ describe('cardio-adapter', () => {
       await speak('Global cue')
       expect(fake.spokenCues).toHaveLength(1)
       stopSpeaking()
+    })
+  })
+
+  describe('location settings and permission helpers (Issue #11)', () => {
+    it('canOpenLocationSettings returns true only on native Android with plugin.openSettings', () => {
+      const plugin = { openSettings: vi.fn() }
+      expect(canOpenLocationSettings({ isNative: true, platform: 'android', plugin })).toBe(true)
+      expect(canOpenLocationSettings({ isNative: false, platform: 'web', plugin })).toBe(false)
+      expect(canOpenLocationSettings({ isNative: true, platform: 'ios', plugin })).toBe(false)
+      expect(canOpenLocationSettings({ isNative: true, platform: 'android', plugin: {} })).toBe(false)
+      expect(canOpenLocationSettings({ isNative: true, platform: 'android', plugin: null })).toBe(false)
+    })
+
+    it('openLocationSettings invokes plugin.openSettings on Android and handles unavailable or failing calls', async () => {
+      const openSettings = vi.fn().mockResolvedValue({ opened: true })
+      expect(await openLocationSettings({ isNative: false, platform: 'web', plugin: { openSettings } })).toBe(false)
+      expect(openSettings).not.toHaveBeenCalled()
+
+      expect(await openLocationSettings({ isNative: true, platform: 'android', plugin: { openSettings } })).toBe(true)
+      expect(openSettings).toHaveBeenCalledTimes(1)
+
+      const failing = vi.fn().mockRejectedValue(new Error('No activity'))
+      expect(await openLocationSettings({ isNative: true, platform: 'android', plugin: { openSettings: failing } })).toBe(false)
+    })
+
+    it('checkLocationPermission checks native Android BackgroundLocation plugin and Web Permissions API', async () => {
+      const grantedPlugin = { checkPermissions: vi.fn().mockResolvedValue({ location: 'granted' }) }
+      const deniedPlugin = { checkPermissions: vi.fn().mockResolvedValue({ location: 'denied' }) }
+      const brokenPlugin = { checkPermissions: vi.fn().mockRejectedValue(new Error('fail')) }
+
+      expect(await checkLocationPermission({ isNative: true, platform: 'android', plugin: grantedPlugin })).toBe(true)
+      expect(grantedPlugin.checkPermissions).toHaveBeenCalledTimes(1)
+      expect(await checkLocationPermission({ isNative: true, platform: 'android', plugin: deniedPlugin })).toBe(false)
+      expect(await checkLocationPermission({ isNative: true, platform: 'android', plugin: brokenPlugin })).toBe(false)
+
+      const webGranted = { permissions: { query: vi.fn().mockResolvedValue({ state: 'granted' }) } }
+      const webPrompt = { permissions: { query: vi.fn().mockResolvedValue({ state: 'prompt' }) } }
+      const webBroken = { permissions: { query: vi.fn().mockRejectedValue(new Error('unsupported')) } }
+
+      expect(await checkLocationPermission({ isNative: false, platform: 'web', navigator: webGranted })).toBe(true)
+      expect(webGranted.permissions.query).toHaveBeenCalledWith({ name: 'geolocation' })
+      expect(await checkLocationPermission({ isNative: false, platform: 'web', navigator: webPrompt })).toBe(false)
+      expect(await checkLocationPermission({ isNative: false, platform: 'web', navigator: webBroken })).toBe(false)
+      expect(await checkLocationPermission({ isNative: false, platform: 'web', navigator: null })).toBe(false)
     })
   })
 })

@@ -4,6 +4,7 @@ import { useStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
 import { t } from '../lib/i18n.js'
 import Icon from '../components/Icon.jsx'
+import { Button, Slider } from '../components/ui.jsx'
 import RouteMap from '../components/RouteMap.jsx'
 import PrBadge, { ActivityPrBadges } from '../components/PrBadge.jsx'
 import { detectActivityPRs } from '../lib/pr.js'
@@ -33,6 +34,7 @@ import {
 import {
   fmtDist,
   fmtPace,
+  fmtPaceSec,
   formatSpeed,
   formatElevation,
   formatDistance,
@@ -118,6 +120,7 @@ export default function ActivityDetail({
   activityId: propActivityId,
   activity: propActivity,
   onBack,
+  initialTrimMode = false,
 }) {
   let routerParams = {}
   try {
@@ -150,6 +153,15 @@ export default function ActivityDetail({
 
   // Track data state
   const initialTrack = activity.track || activity.points ? activity : null
+  const initialPoints = Array.isArray(activity.points)
+    ? activity.points
+    : Array.isArray(activity.track?.points)
+      ? activity.track.points
+      : Array.isArray(activity.track)
+        ? activity.track
+        : Array.isArray(activity.coordinates)
+          ? activity.coordinates
+          : []
   const [trackData, setTrackData] = useState(initialTrack)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -159,9 +171,9 @@ export default function ActivityDetail({
   const [hoverPoint, setHoverPoint] = useState(null)
 
   // Trimming UI state
-  const [trimMode, setTrimMode] = useState(false)
+  const [trimMode, setTrimMode] = useState(Boolean(initialTrimMode))
   const [trimStart, setTrimStart] = useState(0)
-  const [trimEnd, setTrimEnd] = useState(0)
+  const [trimEnd, setTrimEnd] = useState(Math.max(0, initialPoints.length - 1))
   const [savingTrim, setSavingTrim] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [savingRoute, setSavingRoute] = useState(false)
@@ -548,94 +560,71 @@ export default function ActivityDetail({
   const metric = defaultRateMetric(activity.cardioType || activity.type || 'run')
   const rateDisplay = metric === 'speed'
     ? (activity.avgSpeedKmh ? formatSpeed(activity.avgSpeedKmh, S.unit) : null)
-    : (activity.avgPaceSecKm ? fmtPace(activity.avgPaceSecKm, S.unit) : null)
+    : (fmtPaceSec(activity.avgPaceSecKm, S.unit) || null)
+  const dateLabel = fmtDate(activity.d, true) || fmtDate(activity.startTime, true)
+  const activityNotes = activity?.notes != null ? String(activity.notes).trim() : ''
 
   return (
-    <div className="activity-detail-view" data-testid="activity-detail-view" style={{ padding: '16px', maxWidth: 720, margin: '0 auto' }}>
+    <div
+      className="activity-detail-view"
+      data-testid="activity-detail-view"
+      style={{ maxWidth: 720, margin: '0 auto', paddingBottom: 'calc(32px + var(--sab, 0px))' }}
+    >
       {/* Navigation header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+      <div
+        className="row between activity-detail-topbar"
+        style={{ alignItems: 'center', gap: 8, marginBottom: 12 }}
+      >
         <button
           type="button"
-          className="btn plain"
+          className="iconbtn"
           onClick={handleBack}
+          aria-label={t('Back')}
           data-testid="back-btn"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px' }}
         >
-          <Icon name="chevronLeft" /> {t('Back')}
+          <Icon name="chevronLeft" />
         </button>
 
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <button
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Button
             type="button"
-            className="btn plain"
+            variant="plain"
+            size="sm"
+            icon="pencil"
             onClick={handleEdit}
             disabled={!activity?.id}
             data-testid="edit-activity-btn"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+            style={{ minHeight: 36, fontSize: 13, padding: '6px 10px' }}
           >
-            <Icon name="pencil" /> {t('Edit')}
-          </button>
+            {t('Edit')}
+          </Button>
 
-          {trackPoints.length > 0 && (
-            <>
-              <button
-                type="button"
-                className="btn plain"
-                onClick={handleSaveAsRoute}
-                disabled={savingRoute}
-                data-testid="save-route-btn"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
-              >
-                <Icon name="link" /> {savingRoute ? t('Saving route…') : t('Save as Route')}
-              </button>
-
-              <button
-                type="button"
-                className="btn plain"
-                onClick={handleCorrectElevation}
-                disabled={correctingElevation}
-                data-testid="correct-elevation-btn"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
-              >
-                <Icon name="arrowUp" /> {correctingElevation ? t('Correcting…') : t('Correct Elevation')}
-              </button>
-            </>
-          )}
-
-          {trackPoints.length >= 2 && (
-            <button
-              type="button"
-              className={`btn ${trimMode ? 'primary' : 'plain'}`}
-              onClick={() => setTrimMode(!trimMode)}
-              data-testid="trim-toggle-btn"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
-            >
-              <Icon name="pencil" /> {t('Trim')}
-            </button>
-          )}
-
-          <button
+          <Button
             type="button"
-            className="btn plain"
+            variant="plain"
+            size="sm"
+            icon="download"
             onClick={handleExportGPX}
             disabled={exporting || trackPoints.length === 0}
             data-testid="gpx-export-btn"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+            style={{ minHeight: 36, fontSize: 13, padding: '6px 10px' }}
           >
-            <Icon name="download" /> {t('Export GPX')}
-          </button>
+            {t('Export GPX')}
+          </Button>
         </div>
       </div>
 
       {/* Activity Title & PR Trophies */}
-      <div style={{ marginBottom: 16 }}>
+      <div style={{ marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
           <h1 style={{ margin: 0, fontSize: 24, textTransform: 'capitalize' }} data-testid="activity-title">
             {activity.name || t(activity.cardioType || activity.type || 'Cardio')}
           </h1>
-          <span style={{ color: 'var(--label-2, #888)', fontSize: 14 }}>
-            {fmtDate(activity.d || activity.startTime, true)}
-          </span>
+          {dateLabel && (
+            <span style={{ color: 'var(--label-2, #888)', fontSize: 14 }} data-testid="activity-date">
+              {dateLabel}
+            </span>
+          )}
         </div>
 
         {prs.length > 0 && (
@@ -644,6 +633,54 @@ export default function ActivityDetail({
           </div>
         )}
       </div>
+
+      {/* Track Actions */}
+      {trackPoints.length > 0 && (
+        <div
+          className="activity-track-actions"
+          style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}
+        >
+          <Button
+            type="button"
+            variant="tinted"
+            size="sm"
+            icon="link"
+            onClick={handleSaveAsRoute}
+            disabled={savingRoute}
+            data-testid="save-route-btn"
+            style={{ minHeight: 36, fontSize: 13, padding: '6px 10px' }}
+          >
+            {savingRoute ? t('Saving route…') : t('Save as Route')}
+          </Button>
+
+          <Button
+            type="button"
+            variant="tinted"
+            size="sm"
+            icon="arrowUp"
+            onClick={handleCorrectElevation}
+            disabled={correctingElevation}
+            data-testid="correct-elevation-btn"
+            style={{ minHeight: 36, fontSize: 13, padding: '6px 10px' }}
+          >
+            {correctingElevation ? t('Correcting…') : t('Correct Elevation')}
+          </Button>
+
+          {trackPoints.length >= 2 && (
+            <Button
+              type="button"
+              variant={trimMode ? 'primary' : 'tinted'}
+              size="sm"
+              icon="pencil"
+              onClick={() => setTrimMode(!trimMode)}
+              data-testid="trim-toggle-btn"
+              style={{ minHeight: 36, fontSize: 13, padding: '6px 10px' }}
+            >
+              {t('Trim')}
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Summary KPI Cards */}
       <div
@@ -689,6 +726,13 @@ export default function ActivityDetail({
         )}
       </div>
 
+      {activityNotes && (
+        <div className="card" data-testid="activity-notes" style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 12, color: 'var(--label-2, #888)', marginBottom: 4 }}>{t('Notes')}</div>
+          <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{activityNotes}</div>
+        </div>
+      )}
+
       {/* Start/End Trimming UI */}
       {trimMode && (
         <div
@@ -697,8 +741,7 @@ export default function ActivityDetail({
           style={{
             padding: 16,
             borderRadius: 10,
-            background: 'var(--card-bg, rgba(255,255,255,0.08))',
-            border: '1px solid var(--accent, #10b981)',
+            border: '1px solid var(--acc, #10b981)',
             marginBottom: 20,
           }}
         >
@@ -715,17 +758,14 @@ export default function ActivityDetail({
                 <span>{t('Start Point')}</span>
                 <span data-testid="trim-start-value">#{trimStart}</span>
               </div>
-              <input
-                type="range"
-                min="0"
+              <Slider
+                min={0}
                 max={Math.max(0, trackPoints.length - 1)}
+                step={1}
                 value={trimStart}
-                onChange={e => {
-                  const val = Number(e.target.value)
-                  setTrimStart(Math.min(val, trimEnd))
-                }}
+                onChange={val => setTrimStart(Math.min(val, trimEnd))}
+                aria-label={t('Start Point')}
                 data-testid="trim-start-slider"
-                style={{ width: '100%' }}
               />
             </div>
 
@@ -734,42 +774,43 @@ export default function ActivityDetail({
                 <span>{t('End Point')}</span>
                 <span data-testid="trim-end-value">#{trimEnd}</span>
               </div>
-              <input
-                type="range"
-                min="0"
+              <Slider
+                min={0}
                 max={Math.max(0, trackPoints.length - 1)}
+                step={1}
                 value={trimEnd}
-                onChange={e => {
-                  const val = Number(e.target.value)
-                  setTrimEnd(Math.max(val, trimStart))
-                }}
+                onChange={val => setTrimEnd(Math.max(val, trimStart))}
+                aria-label={t('End Point')}
                 data-testid="trim-end-slider"
-                style={{ width: '100%' }}
               />
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
-              <button
+              <Button
                 type="button"
-                className="btn plain"
+                variant="plain"
+                size="sm"
                 onClick={() => {
                   setTrimStart(0)
                   setTrimEnd(trackPoints.length - 1)
                   setTrimMode(false)
                 }}
                 data-testid="trim-cancel-btn"
+                style={{ minHeight: 36 }}
               >
                 {t('Cancel')}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className="btn primary"
+                variant="primary"
+                size="sm"
                 onClick={handleSaveTrim}
                 disabled={savingTrim}
                 data-testid="trim-save-btn"
+                style={{ minHeight: 36 }}
               >
                 {savingTrim ? t('Saving…') : t('Save Trim')}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

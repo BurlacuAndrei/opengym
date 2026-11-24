@@ -30,6 +30,7 @@ import {
   normalizeRoutine
 } from '../lib/routine-kind.js'
 import { getCardioAdapter } from '../lib/cardio-adapter.js'
+import { setCardioStore } from '../lib/cardio-recording.js'
 import {
   reconcileTracksAndRoutes,
   lazyFetchTrack,
@@ -211,7 +212,8 @@ export function normalizeCardioActivity(act = {}) {
     calories: act.calories != null ? Math.max(0, Number(act.calories) || 0) : null,
     rpe: act.rpe != null ? Math.min(10, Math.max(1, Number(act.rpe) || 0)) : null,
     notes: act.notes != null ? String(act.notes) : '',
-    gearId: act.gearId || null
+    gearId: act.gearId || null,
+    ...(act.trackPath ? { trackPath: String(act.trackPath) } : {})
   }
 }
 
@@ -252,6 +254,7 @@ export const useStore = create((set, get) => {
     S: (() => { const s = loadState(); registerCustom(s.customEx); return s })(),
     user: (() => { try { return JSON.parse(localStorage.getItem('gym_user')) || null } catch { return null } })(),
     ready: false,
+    nativeReady: !MOBILE,
     sessionExpired: false,
     reAuthNeeded: false,
     // Instance capabilities from GET /api/config. `config.coach` is present only when the
@@ -549,6 +552,7 @@ export const useStore = create((set, get) => {
         } else if (hasData(S)) {
           nativeSave(S)   // first run after an update from a file-less version: seed the mirror
         }
+        set({ nativeReady: true })
         const serverUrl = getServerUrl()
         const user = get().user
         if (serverUrl && user) {
@@ -610,6 +614,7 @@ export const lazyFetchTrackStore = (id, options) => useStore.getState().lazyFetc
 export const lazyFetchRouteStore = (id, options) => useStore.getState().lazyFetchRoute(id, options)
 export const exportBackup = (options) => useStore.getState().exportBackup(options)
 export const importBackup = (backupData, options) => useStore.getState().importBackup(backupData, options)
+setCardioStore(useStore)
 setGearStore(useStore)
 export const addGear = (gear) => useStore.getState().addGear(gear)
 export const updateGear = (id, patch) => useStore.getState().updateGear(id, patch)

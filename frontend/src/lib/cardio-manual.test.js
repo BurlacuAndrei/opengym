@@ -239,8 +239,83 @@ describe('Manual Cardio Activity Logging (Issue #45)', () => {
       expect(html).toContain('Elevation Gain (m)')
       expect(html).toContain('Perceived Exertion (RPE 1–10)')
       expect(html).toContain('Save activity')
+      expect(html).toContain('class="field num"')
+      expect(html).toContain('class="num field"')
+      expect(html).toContain('flex:1 1 0;min-width:0')
+      expect(html).toContain('flex:0 0 76px;min-width:0')
+      expect(html).toContain('data-testid="manual-gear-selector"')
+      expect(html).toContain('Active Gear')
+      expect(html).toContain('No gear selected')
+      expect(html).toContain('disabled=""')
+      expect(html).toContain('No active gear yet. Track mileage on your running shoes and bikes.')
       // In create mode, delete button should not be present
       expect(html).not.toContain('trash')
+    })
+
+    it('renders active gear selector with sport default and excludes retired gear', () => {
+      useStore.getState().update(s => {
+        s.gear = [
+          { id: 'r1', name: 'Old Pegasus', type: 'shoe', isDefault: true, isRetired: true },
+          { id: 'r2', name: 'Legacy Retired', type: 'shoe', isDefault: false, retired: true },
+          { id: 's1', name: 'Pegasus 40', type: 'shoe', isDefault: true, isRetired: false },
+          { id: 'b1', name: 'Gravel Bike', type: 'bike', isDefault: true, isRetired: false }
+        ]
+      }, false)
+
+      const runHtml = renderToStaticMarkup(
+        React.createElement(ManualCardioSheet, { close: () => {} })
+      )
+      expect(runHtml).toContain('Pegasus 40 (Default)')
+      expect(runHtml).toContain('Gravel Bike (Default)')
+      expect(runHtml).toContain('<option value="s1" selected="">Pegasus 40 (Default)</option>')
+      expect(runHtml).not.toContain('Old Pegasus')
+      expect(runHtml).not.toContain('Legacy Retired')
+      expect(runHtml).not.toContain('No active gear yet')
+
+      const rideHtml = renderToStaticMarkup(
+        React.createElement(ManualCardioSheet, {
+          activity: { type: 'ride' },
+          close: () => {}
+        })
+      )
+      expect(rideHtml).toContain('<option value="b1" selected="">Gravel Bike (Default)</option>')
+    })
+
+    it('handles edit mode gear matching by name, retired fallback, and empty edit gear', () => {
+      useStore.getState().update(s => {
+        s.gear = [
+          { id: 's1', name: 'Pegasus 40', type: 'shoe', isDefault: true, isRetired: false },
+          { id: 'r1', name: 'Retired Trainer', type: 'shoe', isDefault: false, isRetired: true }
+        ]
+      }, false)
+
+      // Edit without gearId must stay unselected instead of overwriting with default
+      const emptyGearEditHtml = renderToStaticMarkup(
+        React.createElement(ManualCardioSheet, {
+          activity: { id: 'act-empty-gear', type: 'run', durationMs: 600000 },
+          close: () => {}
+        })
+      )
+      expect(emptyGearEditHtml).toContain('<option value="" selected="">No gear selected</option>')
+
+      // Legacy case-insensitive name matches active gear id without duplicate option
+      const nameMatchHtml = renderToStaticMarkup(
+        React.createElement(ManualCardioSheet, {
+          activity: { id: 'act-name-match', type: 'run', durationMs: 600000, gearId: 'pegasus 40' },
+          close: () => {}
+        })
+      )
+      expect(nameMatchHtml).toContain('<option value="s1" selected="">Pegasus 40 (Default)</option>')
+      expect(nameMatchHtml).not.toContain('<option value="pegasus 40"')
+
+      // Retired gearId shows fallback option with (Retired) and stays enabled
+      const retiredMatchHtml = renderToStaticMarkup(
+        React.createElement(ManualCardioSheet, {
+          activity: { id: 'act-ret-gear', type: 'run', durationMs: 600000, gearId: 'r1' },
+          close: () => {}
+        })
+      )
+      expect(retiredMatchHtml).toContain('<option value="r1" selected="">Retired Trainer (Retired)</option>')
     })
 
     it('renders in edit mode with prefilled values and delete button', () => {

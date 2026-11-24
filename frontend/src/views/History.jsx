@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { t } from '../lib/i18n.js'
 import { fmtDate, fmtDur } from '../lib/format.js'
-import { fmtDist, fmtPace, formatSpeed, defaultRateMetric } from '../lib/cardio-format.js'
+import { fmtDist, fmtPaceSec, formatSpeed, defaultRateMetric } from '../lib/cardio-format.js'
 import { unifiedHistory } from '../lib/history.js'
 import { WorkoutRow, workoutDetailSheet } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
@@ -75,7 +75,7 @@ export default function History() {
             const metric = defaultRateMetric(cType)
             const rateBadge = metric === 'speed'
               ? (item.avgSpeedKmh ? formatSpeed(item.avgSpeedKmh, normUnit) : null)
-              : (item.avgPaceSecKm ? fmtPace(item.avgPaceSecKm, normUnit) : null)
+              : (fmtPaceSec(item.avgPaceSecKm, normUnit) || null)
 
             return (
               <div

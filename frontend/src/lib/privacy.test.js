@@ -22,7 +22,9 @@ import {
   hasConsent as storeHasConsent,
   getConsent as storeGetConsent
 } from '../store/useStore.js'
-import ConsentSheet from '../components/ConsentSheet.jsx'
+import { useUI } from '../store/useUI.js'
+import ConsentSheet, { openConsentSheet } from '../components/ConsentSheet.jsx'
+import Icon, { ICON_NAMES } from '../components/Icon.jsx'
 import PrivacySettings from '../views/PrivacySettings.jsx'
 
 if (typeof globalThis.localStorage === 'undefined') {
@@ -53,6 +55,8 @@ describe('privacy & consent management (Issue #39)', () => {
         expect(feat.payloadSummary).toBeTruthy()
         expect(feat.triggerTiming).toBeTruthy()
         expect(feat.revocationInstructions).toBeTruthy()
+        expect(ICON_NAMES).toContain(feat.icon)
+        expect(renderToStaticMarkup(React.createElement(Icon, { name: feat.icon }))).toContain('<svg')
       }
     })
   })
@@ -233,6 +237,38 @@ describe('privacy & consent management (Issue #39)', () => {
 
       expect(html).toContain('Revoke consent')
       expect(html).toContain('Consent granted on')
+    })
+
+    it('renders icon svg for server_sync and cardio_gps', () => {
+      for (const id of ['server_sync', 'cardio_gps']) {
+        const feature = EXTERNAL_FEATURES.find(f => f.id === id)
+        const html = renderToStaticMarkup(
+          React.createElement(ConsentSheet, { feature, consented: false })
+        )
+        expect(html).toContain('<svg class="icn')
+      }
+    })
+
+    it('renders disclosure container with class="card" and not class="sect-b" via ConsentSheet and openConsentSheet', () => {
+      const directHtml = renderToStaticMarkup(
+        React.createElement(ConsentSheet, {
+          feature: testFeature,
+          consented: false
+        })
+      )
+      expect(directHtml).toContain('<div class="card"')
+      expect(directHtml).not.toContain('class="sect-b"')
+
+      try {
+        openConsentSheet(testFeature, { consented: false })
+        const sheetRender = useUI.getState().sheets.at(-1)?.render
+        expect(typeof sheetRender).toBe('function')
+        const sheetHtml = renderToStaticMarkup(sheetRender(() => {}))
+        expect(sheetHtml).toContain('<div class="card"')
+        expect(sheetHtml).not.toContain('class="sect-b"')
+      } finally {
+        useUI.getState().closeAll()
+      }
     })
   })
 

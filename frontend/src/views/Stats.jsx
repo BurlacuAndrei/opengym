@@ -95,6 +95,7 @@ function PersonalRecordsCard({ S, normUnit }) {
       <div style={{ marginTop: 8 }}>
         {rows.map(r => {
           const rec = records[r.label]
+          const recDate = rec ? (fmtDate(rec.d, true) || fmtDate(rec.startTime, true)) : ''
           return (
             <div
               key={r.label}
@@ -110,9 +111,7 @@ function PersonalRecordsCard({ S, normUnit }) {
                   <>
                     <span style={{ fontWeight: 600 }}>{formatPrTime(rec.elapsedTime)}</span>
                     <span className="dim">{formatPrPace(rec.elapsedTime, r.target, normUnit)}</span>
-                    {(rec.d || rec.startTime) && (
-                      <span className="muted">{fmtDate(rec.d || rec.startTime, true)}</span>
-                    )}
+                    {recDate && <span className="muted">{recDate}</span>}
                   </>
                 ) : (
                   <span className="dim">—</span>

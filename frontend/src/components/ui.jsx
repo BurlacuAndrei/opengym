@@ -136,21 +136,25 @@ export function Stepper({ value, step = 1, onChange, decimal = true, className =
 // Pointer-driven so the fill, track and thumb are all ours — no ::-webkit-*
 // pseudo-elements, which is the only way the control looks identical on every
 // platform and can pick up the accent colour.
-export function Slider({ value, min = 0, max = 100, step = 1, onChange, className = '' }) {
+export function Slider({ value, min = 0, max = 100, step = 1, onChange, className = '', ...rest }) {
   const ref = useRef(null)
   const [drag, setDrag] = useState(false)
-  const pct = Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100))
+  const safeVal = Number.isFinite(value) ? value : min
+  const safeStep = step > 0 ? step : 1
+  const span = max - min
+  const pct = span <= 0 ? 0 : Math.min(100, Math.max(0, ((safeVal - min) / span) * 100))
 
   const posToValue = useCallback(clientX => {
     const el = ref.current
-    if (!el) return value
+    if (!el) return safeVal
     const r = el.getBoundingClientRect()
+    if (r.width <= 0) return safeVal
     const f = Math.min(1, Math.max(0, (clientX - r.left) / r.width))
-    const raw = min + f * (max - min)
-    const snapped = Math.round(raw / step) * step
+    const raw = min + f * span
+    const snapped = Math.round(raw / safeStep) * safeStep
     // step can be fractional (0.1) — round away binary noise
     return Math.min(max, Math.max(min, Math.round(snapped * 1000) / 1000))
-  }, [min, max, step, value])
+  }, [min, max, span, safeStep, safeVal])
 
   useEffect(() => {
     if (!drag) return
@@ -170,23 +174,24 @@ export function Slider({ value, min = 0, max = 100, step = 1, onChange, classNam
   }, [drag, onChange, posToValue])
 
   const key = e => {
-    const d = e.key === 'ArrowRight' || e.key === 'ArrowUp' ? step
-      : e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? -step : 0
+    const d = e.key === 'ArrowRight' || e.key === 'ArrowUp' ? safeStep
+      : e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? -safeStep : 0
     if (!d) return
     e.preventDefault()
-    onChange(Math.min(max, Math.max(min, Math.round((value + d) * 1000) / 1000)))
+    onChange(Math.min(max, Math.max(min, Math.round((safeVal + d) * 1000) / 1000)))
   }
 
   return (
     <div
       ref={ref}
-      className={'sld' + (drag ? ' dragging' : '') + ' ' + className}
+      className={'sld' + (drag ? ' dragging' : '') + (className ? ' ' + className : '')}
       role="slider"
       tabIndex={0}
-      aria-valuenow={value} aria-valuemin={min} aria-valuemax={max}
+      aria-valuenow={safeVal} aria-valuemin={min} aria-valuemax={max}
       data-nodrag                                  /* keeps the sheet from swipe-dismissing */
       onKeyDown={key}
       onPointerDown={e => { e.currentTarget.setPointerCapture?.(e.pointerId); setDrag(true); onChange(posToValue(e.clientX)) }}
+      {...rest}
     >
       <span className="sld-track"><span className="sld-fill" style={{ width: pct + '%' }} /></span>
       <span className="sld-knob" style={{ left: pct + '%' }} />

@@ -35,6 +35,7 @@ export function createSyncEngine(options = {}) {
     createLocalBackup: createLocalBackupFn = defaultCreateLocalBackup,
     clearToken: clearTokenFn = defaultClearToken,
     clearServerConfig: clearServerConfigFn = defaultClearServerConfig,
+    capApp = CapApp,
     attachListeners = true,
   } = options
 
@@ -57,7 +58,31 @@ export function createSyncEngine(options = {}) {
   const isMobile = () => (options.mobile !== undefined ? options.mobile : Boolean(mobile.MOBILE))
 
   let pushTm = null
-  let saveTm = null
+  let reminderTm = null
+  let savingPromise = null
+  let saveDirty = false
+  let destroyed = false
+  const capHandles = []
+
+  const flushNativeSave = (fallbackState) => {
+    if (!isMobile() || destroyed) return Promise.resolve()
+    saveDirty = true
+    if (savingPromise) return savingPromise
+    savingPromise = (async () => {
+      try {
+        while (saveDirty && !destroyed) {
+          saveDirty = false
+          const target = getState?.()?.S ?? fallbackState
+          try {
+            await nativeSaveFn?.(target)
+          } catch (e) { /* keep localStorage copy */ }
+        }
+      } finally {
+        savingPromise = null
+      }
+    })()
+    return savingPromise
+  }
 
   const persist = (S, push = true) => {
     migrateScheduleFn?.(S)
@@ -66,10 +91,10 @@ export function createSyncEngine(options = {}) {
     storage.setItem(storageKey, JSON.stringify(S))
     setState?.({ S })
     if (isMobile()) {
-      clearTimeout(saveTm)
-      saveTm = setTimeout(() => {
-        saveTm = null
-        nativeSaveFn?.(getState().S)
+      flushNativeSave(S)
+      clearTimeout(reminderTm)
+      reminderTm = setTimeout(() => {
+        reminderTm = null
         syncReminderFn?.(getState().S)
       }, 800)
     }
@@ -84,16 +109,26 @@ export function createSyncEngine(options = {}) {
   }
 
   const flushPending = async () => {
-    if (isMobile() && saveTm) {
-      clearTimeout(saveTm)
-      saveTm = null
-      nativeSaveFn?.(getState().S)
+    if (isMobile() && reminderTm) {
+      clearTimeout(reminderTm)
+      reminderTm = null
+      syncReminderFn?.(getState().S)
     }
+    const pendingSave = isMobile()
+      ? (saveDirty ? flushNativeSave() : savingPromise)
+      : null
+    let pushRes
     if (pushTm) {
       clearTimeout(pushTm)
       pushTm = null
-      return await pushState()
+      pushRes = await pushState()
     }
+    if (pendingSave) await pendingSave
+    if (isMobile()) {
+      if (saveDirty) await flushNativeSave()
+      else if (savingPromise) await savingPromise
+    }
+    return pushRes
   }
 
   const pushState = async () => {
@@ -109,7 +144,7 @@ export function createSyncEngine(options = {}) {
       const res = await api('/api/data', { method: 'PUT', body: JSON.stringify(body) })
       storage.setItem('gym_last_synced_ts', String(res?.ts || S?._ts || ''))
       storage.removeItem('gym_dirty')
-      if (isMobile()) nativeSaveFn?.(S)
+      if (isMobile()) await flushNativeSave(S)
       return res
     } catch (e) {
       storage.setItem('gym_dirty', '1')
@@ -205,7 +240,7 @@ export function createSyncEngine(options = {}) {
       if (serverState?._ts) storage.setItem('gym_last_synced_ts', String(serverState._ts))
       else storage.removeItem('gym_last_synced_ts')
       storage.removeItem('gym_dirty')
-      if (isMobile()) nativeSaveFn?.(getState().S)
+      if (isMobile()) await flushNativeSave(getState().S)
       return
     }
 
@@ -287,7 +322,7 @@ export function createSyncEngine(options = {}) {
       await cleanupCachedServerTracks?.({ adapter: getCardioAdapter?.(), all: true })?.catch?.(() => {})
     } else {
       if (isMobile()) {
-        nativeSaveFn?.(getState().S)
+        await flushNativeSave(getState().S)
       }
     }
   }
@@ -314,22 +349,58 @@ export function createSyncEngine(options = {}) {
   }
 
   const onVisibilityChange = () => {
+    if (destroyed) return
     if (typeof document !== 'undefined' && document.visibilityState !== 'hidden') return
-    if (isMobile() && saveTm) {
-      clearTimeout(saveTm)
-      saveTm = null
-      nativeSaveFn?.(getState().S)
-    }
-    if (pushTm) {
-      clearTimeout(pushTm)
-      pushTm = null
-      return pushState()
-    }
+    return flushPending()
   }
 
-  const onOnline = () => handleOnline()
+  const onPageHide = () => {
+    if (destroyed) return
+    return flushPending()
+  }
+  const onPause = () => {
+    if (destroyed) return
+    return flushPending()
+  }
+  const onAppStateChange = (state) => {
+    if (destroyed) return
+    if (state?.isActive === false) return flushPending()
+  }
 
-  const onResume = () => handleResume()
+  const onOnline = () => {
+    if (destroyed) return
+    return handleOnline()
+  }
+
+  const onResume = () => {
+    if (destroyed) return
+    return handleResume()
+  }
+
+  const removeCapHandle = (handle) => {
+    try {
+      const p = handle?.remove?.()
+      if (p && typeof p.catch === 'function') p.catch(() => {})
+    } catch (e) { /* ignore */ }
+  }
+
+  const addCapListener = (event, cb) => {
+    try {
+      const res = capApp?.addListener?.(event, cb)
+      if (!res) return
+      if (typeof res.then === 'function') {
+        Promise.resolve(res).then(handle => {
+          if (!handle) return
+          if (destroyed) removeCapHandle(handle)
+          else capHandles.push(handle)
+        }).catch(() => {})
+      } else if (destroyed) {
+        removeCapHandle(res)
+      } else {
+        capHandles.push(res)
+      }
+    } catch (e) { /* ignore */ }
+  }
 
   if (attachListeners) {
     if (typeof document !== 'undefined' && document.addEventListener) {
@@ -337,22 +408,29 @@ export function createSyncEngine(options = {}) {
     }
     if (typeof window !== 'undefined' && window.addEventListener) {
       window.addEventListener('online', onOnline)
+      window.addEventListener('pagehide', onPageHide)
     }
-    try {
-      CapApp?.addListener?.('resume', onResume)?.catch?.(() => {})
-    } catch (e) { /* ignore */ }
+    addCapListener('resume', onResume)
+    addCapListener('pause', onPause)
+    addCapListener('appStateChange', onAppStateChange)
   }
 
   const destroy = () => {
+    destroyed = true
+    saveDirty = false
     clearTimeout(pushTm)
     pushTm = null
-    clearTimeout(saveTm)
-    saveTm = null
+    clearTimeout(reminderTm)
+    reminderTm = null
     if (typeof document !== 'undefined' && document.removeEventListener) {
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
     if (typeof window !== 'undefined' && window.removeEventListener) {
       window.removeEventListener('online', onOnline)
+      window.removeEventListener('pagehide', onPageHide)
+    }
+    while (capHandles.length) {
+      removeCapHandle(capHandles.pop())
     }
   }
 

@@ -35,6 +35,12 @@ describe('Multi-Sport Home View (Issue #98)', () => {
     const html = renderToStaticMarkup(React.createElement(Home))
     expect(html).not.toContain('Record Cardio')
     expect(html).toContain('data-testid="home-onboarding-chooser"')
+    expect(html).toContain('data-testid="home-today-card"')
+    expect(html.indexOf('data-testid="home-onboarding-chooser"')).toBeLessThan(html.indexOf('data-testid="home-today-card"'))
+    expect(html.indexOf('Welcome!')).toBeGreaterThan(-1)
+    expect(html.indexOf('Welcome!')).toBeLessThan(html.indexOf('Rest &amp; Recovery'))
+    expect(html).toMatch(/<button[^>]*class="btn plain sm[^"]*"[^>]*><span>Adjust<\/span><\/button>/)
+    expect(html).not.toContain('height:24px')
     expect(html).toContain('data-testid="starter-option-hybrid"')
     expect(html).toContain('data-testid="starter-option-endurance"')
     expect(html).toContain('data-testid="starter-option-ppl"')
@@ -75,6 +81,8 @@ describe('Multi-Sport Home View (Issue #98)', () => {
 
     const html = renderToStaticMarkup(React.createElement(Home))
     expect(html).not.toContain('Record Cardio')
+    expect(html).toContain('data-testid="home-today-card"')
+    expect(html).not.toContain('data-testid="home-onboarding-chooser"')
     expect(html).toContain('Upper Push')
     expect(html).toContain('Evening Yoga')
     expect(html).toContain('5 km')
@@ -86,5 +94,37 @@ describe('Multi-Sport Home View (Issue #98)', () => {
     expect(html).toContain('pillar-strength')
     expect(html).toContain('pillar-cardio')
     expect(html).toContain('pillar-flow')
+  })
+
+  it('renders Today card with rest state and without onboarding chooser on non-empty rest day', () => {
+    useStore.setState({
+      S: {
+        ...JSON.parse(JSON.stringify(DEF)),
+        routines: [{ id: 'r-push', name: 'Upper Push', kind: 'gym', emoji: 'barbell', ex: [] }],
+        week: {}
+      }
+    })
+
+    const html = renderToStaticMarkup(React.createElement(Home))
+    expect(html).toContain('data-testid="home-today-card"')
+    expect(html).toContain('data-testid="home-rest-state"')
+    expect(html).toContain('Rest &amp; Recovery')
+    expect(html).not.toContain('data-testid="home-onboarding-chooser"')
+    expect(html).toMatch(/<button[^>]*class="btn plain sm[^"]*"[^>]*><span>Adjust<\/span><\/button>/)
+  })
+
+  it('formats cardio avgPaceSecKm cleanly in metric and imperial without 300:00 bug', () => {
+    const today = todayISO()
+    const baseRun = { id: 'c-pace', type: 'run', cardioType: 'run', name: 'Tempo Run', d: today, durationMs: 1500000, distanceM: 5000, avgPaceSecKm: 300 }
+
+    useStore.setState({ S: { ...JSON.parse(JSON.stringify(DEF)), unit: 'kg', cardioActivities: [baseRun] } })
+    const kgHtml = renderToStaticMarkup(React.createElement(Home))
+    expect(kgHtml).toContain('5:00 min/km')
+    expect(kgHtml).not.toContain('300:00')
+
+    useStore.setState({ S: { ...JSON.parse(JSON.stringify(DEF)), unit: 'lb', cardioActivities: [baseRun] } })
+    const lbHtml = renderToStaticMarkup(React.createElement(Home))
+    expect(lbHtml).toContain('8:03 min/mi')
+    expect(lbHtml).not.toContain('300:00')
   })
 })

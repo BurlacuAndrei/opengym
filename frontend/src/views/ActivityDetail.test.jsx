@@ -5,6 +5,7 @@ import ActivityDetail, {
   saveActivityAsRoute,
   correctActivityElevation,
 } from './ActivityDetail.jsx'
+import { fmtDate } from '../lib/format.js'
 import { useStore, DEF } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
 import { EXTERNAL_FEATURES } from '../lib/privacy.js'
@@ -21,6 +22,7 @@ import {
 import { exportGPX, sanitizeFilename } from '../lib/gpx-io.js'
 import { trimTrackPoints, trimTrack, resolveTrackPath } from '../lib/track-trim.js'
 import RouteMap, { OSM_FEATURE_ID } from '../components/RouteMap.jsx'
+import { Slider } from '../components/ui.jsx'
 import {
   haversineDistance,
   rollingPace,
@@ -29,6 +31,16 @@ import {
   totalDistance,
 } from '../lib/track-math.js'
 import * as apiModule from '../lib/api.js'
+
+vi.mock('../store/useStore.js', async importOriginal => {
+  const actual = await importOriginal()
+  const useStoreMock = selector => {
+    const s = actual.useStore.getState()
+    return selector ? selector(s) : s
+  }
+  Object.assign(useStoreMock, actual.useStore)
+  return { ...actual, useStore: useStoreMock }
+})
 
 // In-memory localStorage mock for node environment
 if (typeof globalThis.localStorage === 'undefined') {
@@ -121,12 +133,61 @@ describe('ActivityDetail View (Issue #83)', () => {
 
       expect(html).toContain('data-testid="activity-detail-view"')
       expect(html).toContain('Afternoon River Run')
+      expect(html).toContain('data-testid="activity-date"')
+      expect(html).toContain(fmtDate(sampleActivity.d, true))
+      expect(html).not.toContain('Invalid Date')
       expect(html).toContain('data-testid="activity-kpi-grid"')
       expect(html).toContain('data-testid="kpi-distance"')
       expect(html).toContain('data-testid="kpi-duration"')
       expect(html).toContain('data-testid="kpi-rate"')
       expect(html).toContain('data-testid="kpi-elevation"')
       expect(html).toContain('+35 m')
+    })
+
+    it('renders valid date for ISO-only and numeric epoch startTime without Invalid Date', () => {
+      const isoActivity = {
+        ...sampleActivity,
+        d: undefined,
+        startTime: '2026-11-12T14:30:00Z',
+      }
+      const isoHtml = renderToStaticMarkup(
+        React.createElement(ActivityDetail, { activity: isoActivity })
+      )
+      expect(isoHtml).toContain('data-testid="activity-date"')
+      expect(isoHtml).toContain(fmtDate(isoActivity.startTime, true))
+      expect(isoHtml).not.toContain('Invalid Date')
+
+      const numActivity = {
+        ...sampleActivity,
+        d: undefined,
+        startTime: 1731400000000,
+      }
+      const numHtml = renderToStaticMarkup(
+        React.createElement(ActivityDetail, { activity: numActivity })
+      )
+      expect(numHtml).toContain('data-testid="activity-date"')
+      expect(numHtml).toContain(fmtDate(numActivity.startTime, true))
+      expect(numHtml).not.toContain('Invalid Date')
+    })
+
+    it('renders multi-line notes and hides notes card when empty or whitespace-only', () => {
+      const notedHtml = renderToStaticMarkup(
+        React.createElement(ActivityDetail, {
+          activity: { ...sampleActivity, notes: '  Line 1\nLine 2  ' },
+        })
+      )
+      expect(notedHtml).toContain('data-testid="activity-notes"')
+      expect(notedHtml).toContain('Notes')
+      expect(notedHtml).toContain('Line 1\nLine 2')
+
+      for (const emptyNotes of [undefined, null, '', '   \n\t  ']) {
+        const html = renderToStaticMarkup(
+          React.createElement(ActivityDetail, {
+            activity: { ...sampleActivity, notes: emptyNotes },
+          })
+        )
+        expect(html).not.toContain('data-testid="activity-notes"')
+      }
     })
 
     it('renders navigation buttons: Back, Trim, and GPX Export', () => {
@@ -178,6 +239,23 @@ describe('ActivityDetail View (Issue #83)', () => {
       expect(html).toContain('Fastest')
     })
 
+    it('formats avgPaceSecKm KPI without double-dividing splits and supports imperial lb', () => {
+      const kgHtml = renderToStaticMarkup(
+        React.createElement(ActivityDetail, { activity: sampleActivity })
+      )
+      expect(kgHtml).toContain('6:00 min/km')
+      expect(kgHtml).not.toContain('360:00')
+      const split1Match = kgHtml.match(/data-testid="split-row-1"[\s\S]*?<\/tr>/)
+      expect(split1Match?.[0]).toMatch(/[1-9]\d?:\d{2} min\/km/)
+
+      useStore.setState({ S: { ...useStore.getState().S, unit: 'lb' } })
+      const lbHtml = renderToStaticMarkup(
+        React.createElement(ActivityDetail, { activity: sampleActivity })
+      )
+      expect(lbHtml).toContain('9:39 min/mi')
+      expect(lbHtml).not.toContain('360:00')
+    })
+
     it('renders PR trophy badges when achieved', () => {
       const html = renderToStaticMarkup(
         React.createElement(ActivityDetail, {
@@ -204,6 +282,8 @@ describe('ActivityDetail View (Issue #83)', () => {
       )
 
       expect(html).toContain('No GPS track data available for this activity')
+      expect(html).not.toContain('data-testid="activity-date"')
+      expect(html).not.toContain('Invalid Date')
       expect(html).not.toContain('data-testid="elevation-chart"')
       expect(html).not.toContain('data-testid="pace-chart"')
     })
@@ -504,6 +584,110 @@ describe('ActivityDetail View (Issue #83)', () => {
         state: consentedState,
       })
       expect(unavail).toEqual({ unavailable: true })
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // 7. Compact Header, Track Actions, Slider Trim, and Bottom Clearance (Issue #6)
+  // -------------------------------------------------------------------------
+  describe('7. Compact Header, Track Actions, Slider Trim, and Bottom Clearance (Issue #6)', () => {
+    it('renders compact topbar with iconbtn back button, sm header buttons, and separate track actions row', () => {
+      const html = renderToStaticMarkup(
+        React.createElement(ActivityDetail, { activity: sampleActivity })
+      )
+
+      expect(html).toContain('activity-detail-topbar')
+      expect(html).toMatch(/<button[^>]*class="iconbtn"[^>]*aria-label="Back"[^>]*data-testid="back-btn"/)
+      expect(html).toMatch(/<button[^>]*class="btn plain sm\s*"[^>]*data-testid="edit-activity-btn"/)
+      expect(html).toMatch(/<button[^>]*class="btn plain sm\s*"[^>]*data-testid="gpx-export-btn"/)
+      expect(html).toContain('activity-track-actions')
+      expect(html).toMatch(/<button[^>]*class="btn tinted sm\s*"[^>]*data-testid="save-route-btn"/)
+      expect(html).toMatch(/<button[^>]*class="btn tinted sm\s*"[^>]*data-testid="correct-elevation-btn"/)
+      expect(html).toMatch(/<button[^>]*class="btn tinted sm\s*"[^>]*data-testid="trim-toggle-btn"/)
+    })
+
+    it('hides track action row when trackPoints.length === 0 and disables GPX export', () => {
+      const html = renderToStaticMarkup(
+        React.createElement(ActivityDetail, {
+          activity: { ...sampleActivity, points: [], track: undefined },
+        })
+      )
+
+      expect(html).not.toContain('activity-track-actions')
+      expect(html).not.toContain('data-testid="save-route-btn"')
+      expect(html).not.toContain('data-testid="correct-elevation-btn"')
+      expect(html).not.toContain('data-testid="trim-toggle-btn"')
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-testid="gpx-export-btn"/)
+    })
+
+    it('renders Slider controls in initialTrimMode with no native range inputs', () => {
+      const html = renderToStaticMarkup(
+        React.createElement(ActivityDetail, {
+          activity: sampleActivity,
+          initialTrimMode: true,
+        })
+      )
+
+      expect(html).toContain('data-testid="trim-controls"')
+      expect(html).toMatch(/<button[^>]*class="btn primary sm\s*"[^>]*data-testid="trim-toggle-btn"/)
+      expect(html).not.toContain('type="range"')
+      expect(html).toContain('role="slider"')
+      expect(html).toContain('data-testid="trim-start-slider"')
+      expect(html).toContain('data-testid="trim-end-slider"')
+      expect(html).toContain('aria-label="Start Point"')
+      expect(html).toContain('aria-label="End Point"')
+      expect(html).toContain('aria-valuenow="0"')
+      expect(html).toContain(`aria-valuenow="${sampleTrackPoints.length - 1}"`)
+      expect(html).toContain(`aria-valuemax="${sampleTrackPoints.length - 1}"`)
+      expect(html).toContain('6 / 6 points')
+      expect(html).toMatch(/<button[^>]*class="btn plain sm\s*"[^>]*data-testid="trim-cancel-btn"/)
+      expect(html).toMatch(/<button[^>]*class="btn primary sm\s*"[^>]*data-testid="trim-save-btn"/)
+    })
+
+    it('Slider handles SSR edge cases: value=0, min===max, value=undefined, and ...rest props', () => {
+      const zeroHtml = renderToStaticMarkup(
+        React.createElement(Slider, { value: 0, min: 0, max: 5, onChange: () => {} })
+      )
+      expect(zeroHtml).toContain('aria-valuenow="0"')
+      expect(zeroHtml).toContain('width:0%')
+      expect(zeroHtml).toContain('left:0%')
+
+      const equalBoundsHtml = renderToStaticMarkup(
+        React.createElement(Slider, { value: 3, min: 3, max: 3, onChange: () => {} })
+      )
+      expect(equalBoundsHtml).toContain('aria-valuenow="3"')
+      expect(equalBoundsHtml).toContain('width:0%')
+      expect(equalBoundsHtml).toContain('left:0%')
+      expect(equalBoundsHtml).not.toContain('NaN')
+
+      const undefHtml = renderToStaticMarkup(
+        React.createElement(Slider, { value: undefined, min: 2, max: 10, onChange: () => {} })
+      )
+      expect(undefHtml).toContain('aria-valuenow="2"')
+      expect(undefHtml).toContain('width:0%')
+
+      const restHtml = renderToStaticMarkup(
+        React.createElement(Slider, {
+          value: 2,
+          min: 0,
+          max: 4,
+          onChange: () => {},
+          'data-testid': 'custom-slider',
+          'aria-label': 'Trim point',
+        })
+      )
+      expect(restHtml).toContain('data-testid="custom-slider"')
+      expect(restHtml).toContain('aria-label="Trim point"')
+      expect(restHtml).toContain('width:50%')
+    })
+
+    it('sets safe-area bottom padding clearance on .activity-detail-view without 16px outer padding', () => {
+      const html = renderToStaticMarkup(
+        React.createElement(ActivityDetail, { activity: sampleActivity })
+      )
+
+      expect(html).toContain('padding-bottom:calc(32px + var(--sab, 0px))')
+      expect(html).not.toContain('padding:16px;max-width:720px')
     })
   })
 })

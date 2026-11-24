@@ -30,6 +30,48 @@ export function getBackgroundLocationPlugin() {
   return globalThis.__opengymBackgroundLocation
 }
 
+export function canOpenLocationSettings(deps = {}) {
+  const isNative = deps.isNative ?? Capacitor?.isNativePlatform?.()
+  const platform = deps.platform ?? Capacitor?.getPlatform?.()
+  if (!isNative || platform !== 'android') return false
+  const plugin = deps.plugin !== undefined ? deps.plugin : getBackgroundLocationPlugin()
+  return typeof plugin?.openSettings === 'function'
+}
+
+export async function openLocationSettings(deps = {}) {
+  if (!canOpenLocationSettings(deps)) return false
+  const plugin = deps.plugin !== undefined ? deps.plugin : getBackgroundLocationPlugin()
+  try {
+    await plugin.openSettings()
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function checkLocationPermission(deps = {}) {
+  const isNative = deps.isNative ?? Capacitor?.isNativePlatform?.()
+  const platform = deps.platform ?? Capacitor?.getPlatform?.()
+  if (isNative && platform === 'android') {
+    const plugin = deps.plugin !== undefined ? deps.plugin : getBackgroundLocationPlugin()
+    try {
+      const res = await plugin?.checkPermissions?.()
+      return res?.location === 'granted'
+    } catch {
+      return false
+    }
+  }
+  const nav = deps.navigator !== undefined
+    ? deps.navigator
+    : (typeof navigator !== 'undefined' ? navigator : undefined)
+  try {
+    const status = await nav?.permissions?.query?.({ name: 'geolocation' })
+    return status?.state === 'granted'
+  } catch {
+    return false
+  }
+}
+
 /**
  * Normalizes track file paths by trimming, converting backslashes,
  * and stripping leading slashes.
@@ -414,6 +456,21 @@ export function createNativeCardioAdapter(deps = {}) {
       const bgLocPlugin = useBackgroundLocation
         ? (deps.backgroundLocation || getBackgroundLocationPlugin())
         : null
+      const toFatalError = err => {
+        const normalized =
+          err instanceof Error
+            ? err
+            : Object.assign(
+                new Error(typeof err === 'string' ? err : err?.message || 'GPS error'),
+                err && typeof err === 'object' ? err : null
+              )
+        try {
+          normalized.fatal = true
+        } catch {
+          // Ignore non-extensible error objects
+        }
+        return normalized
+      }
       if (bgLocPlugin && typeof bgLocPlugin.start === 'function') {
         activeBgLocPlugin = bgLocPlugin
         try {
@@ -425,10 +482,10 @@ export function createNativeCardioAdapter(deps = {}) {
           })
           bgLocSubs = [locSub, errSub]
           Promise.resolve(bgLocPlugin.start()).catch(e => {
-            if (onError) onError(e)
+            if (onError) onError(toFatalError(e))
           })
         } catch (e) {
-          if (onError) onError(e)
+          if (onError) onError(toFatalError(e))
         }
       } else if (typeof navigator !== 'undefined' && navigator.geolocation) {
         try {
@@ -442,10 +499,10 @@ export function createNativeCardioAdapter(deps = {}) {
             geoOpts
           )
         } catch (e) {
-          if (onError) onError(e)
+          if (onError) onError(toFatalError(e))
         }
       } else {
-        if (onError) onError(new Error('Geolocation is not supported on this platform'))
+        if (onError) onError(toFatalError(new Error('Geolocation is not supported on this platform')))
       }
 
       const stop = () => adapter.stopWatcher(watchId)

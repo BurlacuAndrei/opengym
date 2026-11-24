@@ -131,6 +131,7 @@ describe('useStore', () => {
   })
 
   afterEach(() => {
+    useStore?.getState?.()?.syncEngine?.destroy?.()
     resetTransport()
   })
 
@@ -451,6 +452,88 @@ describe('useStore', () => {
 
       expect(transport).not.toHaveBeenCalled()
       expect(useStore.getState().ready).toBe(true)
+    })
+
+    it('initializes nativeReady=!MOBILE and gates App Shell until nativeLoad() finishes (before pullState)', async () => {
+      // Non-mobile starts with nativeReady = true
+      expect(useStore.getState().nativeReady).toBe(true)
+
+      // Re-import store with MOBILE = true and a cached server user
+      mockMobile = true
+      storage.setItem('gym_user', JSON.stringify({ id: 'u1', name: 'Alice' }))
+      storage.setItem('gym_server_config', JSON.stringify({ url: 'https://gym.example.com' }))
+
+      let resolveLoad
+      mockNativeLoad.mockImplementation(() => new Promise(res => { resolveLoad = res }))
+
+      let resolvePull
+      vi.resetModules()
+      const apiMod = await import('../lib/api.js')
+      setTransport = apiMod.setTransport
+      resetTransport = apiMod.resetTransport
+      setTransport(
+        vi.fn()
+          .mockImplementationOnce(() => new Promise(res => { resolvePull = res }))
+          .mockResolvedValue({ ts: 9000 })
+      )
+
+      const mod = await import('./useStore.js')
+      useStore = mod.useStore
+
+      expect(useStore.getState().nativeReady).toBe(false)
+
+      const React = (await import('react')).default
+      const { renderToStaticMarkup } = await import('react-dom/server')
+      const { MemoryRouter } = await import('react-router-dom')
+      vi.doMock('./useStore.js', () => {
+        const useStoreProxy = selector => {
+          const s = useStore.getState()
+          return selector ? selector(s) : s
+        }
+        Object.assign(useStoreProxy, useStore)
+        return { ...mod, useStore: useStoreProxy }
+      })
+      vi.doMock('../lib/i18n.js', async (importOriginal) => {
+        const actual = await importOriginal()
+        return { ...actual, useLang: () => 0 }
+      })
+      try {
+        const { Shell } = await import('../App.jsx')
+
+        // Even with cached user (authed=true), Shell stays on splash while nativeReady=false
+        const splashHtml = renderToStaticMarkup(
+          React.createElement(MemoryRouter, { initialEntries: ['/home'] }, React.createElement(Shell))
+        )
+        expect(splashHtml).toContain('44vh')
+        expect(splashHtml).not.toContain('vfade')
+
+        const bootPromise = useStore.getState().boot()
+        await Promise.resolve()
+        expect(useStore.getState().nativeReady).toBe(false)
+
+        // Resolve nativeLoad() while pullState() is still in-flight
+        resolveLoad({ _ts: 9000, workouts: [{ id: 'mirror-1', name: 'From Mirror' }] })
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+
+        expect(useStore.getState().nativeReady).toBe(true)
+        expect(useStore.getState().ready).toBe(false)
+        expect(useStore.getState().S.workouts).toEqual([{ id: 'mirror-1', name: 'From Mirror' }])
+
+        const appHtml = renderToStaticMarkup(
+          React.createElement(MemoryRouter, { initialEntries: ['/home'] }, React.createElement(Shell))
+        )
+        expect(appHtml).toContain('vfade')
+        expect(appHtml).not.toContain('44vh')
+
+        resolvePull({ state: null })
+        await bootPromise
+        expect(useStore.getState().ready).toBe(true)
+      } finally {
+        vi.doUnmock('./useStore.js')
+        vi.doUnmock('../lib/i18n.js')
+      }
     })
   })
 
@@ -1993,6 +2076,108 @@ describe('useStore', () => {
       const saved = useStore.getState().S.freestyleSessions[0]
       expect(saved.routineId).toBe('r-mob-1')
       expect(saved.name).toBe('Recovery Mobility')
+    })
+  })
+
+  describe('live GPS cardio recording persistence (Issue #1)', () => {
+    it('persists finished singleton run with trackPath & gearId, increments gear once, writes/deletes track, and saves mobile mirror', async () => {
+      mockMobile = true
+      const { createMemoryCardioAdapter, setCardioAdapter } = await import('../lib/cardio-adapter.js')
+      const { startRecording, onFix, finishRecording } = await import('../lib/cardio-recording.js')
+      const { finalizeRecordingLinks } = await import('../views/RecordingView.jsx')
+
+      const adapter = createMemoryCardioAdapter()
+      setCardioAdapter(adapter)
+
+      const store = useStore.getState()
+      const gear = store.addGear({ id: 'g-shoe-1', name: 'Vaporfly', type: 'shoe', distanceM: 1000 })
+      store.update(s => {
+        s.cardioPlans = [{ id: 'cp-1', type: 'run', targetDistanceM: 1000, completed: false }]
+      }, false)
+
+      await startRecording({
+        id: 'live-run-1',
+        type: 'run',
+        startTime: '2026-11-24T10:00:00.000Z',
+      })
+      await onFix({ latitude: 47.370000, longitude: 8.540000, elevation: 400, timestamp: 1710000000000, speed: 3.33 })
+      await onFix({ latitude: 47.379000, longitude: 8.540000, elevation: 420, timestamp: 1710000300000, speed: 3.33 })
+
+      const activity = await finishRecording({ gearId: gear.id })
+
+      // Persisted in S.cardioActivities with trackPath & gearId
+      const stateAfter = useStore.getState().S
+      expect(stateAfter.cardioActivities).toHaveLength(1)
+      const persisted = stateAfter.cardioActivities[0]
+      expect(persisted.id).toBe('live-run-1')
+      expect(persisted.trackPath).toBe('2026/live-run-1.json')
+      expect(persisted.gearId).toBe(gear.id)
+      expect(persisted.distanceM).toBeGreaterThan(950)
+
+      // Persisted in localStorage and mobile nativeSave
+      const savedLocal = JSON.parse(storage.getItem('gym_state_v1'))
+      expect(savedLocal.cardioActivities).toHaveLength(1)
+      expect(savedLocal.cardioActivities[0].trackPath).toBe('2026/live-run-1.json')
+      await useStore.getState().flushPending()
+      expect(mockNativeSave).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          cardioActivities: expect.arrayContaining([
+            expect.objectContaining({ id: 'live-run-1', trackPath: '2026/live-run-1.json' })
+          ])
+        })
+      )
+
+      // Track written & recovery log cleared
+      expect(await adapter.hasTrack('2026/live-run-1.json')).toBe(true)
+      expect(await adapter.readRecoveryLog()).toHaveLength(0)
+
+      // Gear mileage incremented ONCE; finalizeRecordingLinks with gearAlreadyApplied does not double-count
+      const gearAfterFinish = useStore.getState().S.gear.find(g => g.id === gear.id)
+      expect(gearAfterFinish.distanceM).toBe(1000 + activity.distanceM)
+
+      finalizeRecordingLinks(activity, {
+        selectedGearId: gear.id,
+        selectedPlanId: 'cp-1',
+        gearAlreadyApplied: true,
+        accumulateGearFn: useStore.getState().accumulateGearDistance,
+        updateCardioActivityFn: useStore.getState().updateCardioActivity,
+        updateStoreFn: useStore.getState().update,
+      })
+
+      expect(useStore.getState().S.gear.find(g => g.id === gear.id).distanceM).toBe(1000 + activity.distanceM)
+      expect(useStore.getState().S.cardioPlans.find(p => p.id === 'cp-1').completed).toBe(true)
+
+      // deleteCardioActivity deletes the persisted track file
+      useStore.getState().deleteCardioActivity('live-run-1')
+      await Promise.resolve()
+      expect(useStore.getState().S.cardioActivities).toHaveLength(0)
+      expect(await adapter.hasTrack('2026/live-run-1.json')).toBe(false)
+    })
+
+    it('leaves gear mileage unchanged when distance is 0 or no gearId is provided', async () => {
+      const { createMemoryCardioAdapter, setCardioAdapter } = await import('../lib/cardio-adapter.js')
+      const { startRecording, onFix, finishRecording } = await import('../lib/cardio-recording.js')
+
+      const adapter = createMemoryCardioAdapter()
+      setCardioAdapter(adapter)
+
+      const store = useStore.getState()
+      const gear = store.addGear({ id: 'g-shoe-2', name: 'Pegasus', type: 'shoe', distanceM: 500 })
+
+      // Case 1: 0 distance with gearId
+      await startRecording({ id: 'zero-dist-run', type: 'run', startTime: '2026-11-24T11:00:00.000Z' })
+      const zeroAct = await finishRecording({ gearId: gear.id })
+      expect(zeroAct.distanceM).toBe(0)
+      expect(useStore.getState().S.gear.find(g => g.id === gear.id).distanceM).toBe(500)
+
+      // Case 2: non-zero distance with no gearId
+      await startRecording({ id: 'no-gear-run', type: 'run', startTime: '2026-11-24T12:00:00.000Z' })
+      await onFix({ latitude: 47.370000, longitude: 8.540000, timestamp: 1710000000000 })
+      await onFix({ latitude: 47.379000, longitude: 8.540000, timestamp: 1710000300000 })
+      const noGearAct = await finishRecording()
+      expect(noGearAct.distanceM).toBeGreaterThan(950)
+      expect(noGearAct.gearId).toBeNull()
+      expect(useStore.getState().S.gear.find(g => g.id === gear.id).distanceM).toBe(500)
     })
   })
 })

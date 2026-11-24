@@ -49,9 +49,49 @@ export function normalizeGearItem(data = {}) {
     distanceM,
     maxDistanceM,
     isDefault: Boolean(data.isDefault),
-    isRetired: Boolean(data.isRetired),
+    isRetired: Boolean(data.isRetired || data.retired),
     createdAt: data.createdAt || new Date().toISOString()
   }
+}
+
+/**
+ * Checks whether a gear item is retired (supports both isRetired and legacy retired flags).
+ */
+export function isGearRetired(gear) {
+  return Boolean(gear && typeof gear === 'object' && (gear.isRetired || gear.retired))
+}
+
+/**
+ * Filters a gear list to active (non-retired) valid gear items.
+ */
+export function getActiveGear(gearList) {
+  return (Array.isArray(gearList) ? gearList : []).filter(
+    g => g && typeof g === 'object' && !isGearRetired(g)
+  )
+}
+
+/**
+ * Maps a cardio sport type to its matching gear category ('bike' or 'shoe').
+ */
+export function gearCategoryForSport(sport) {
+  return sport === 'ride' ? 'bike' : 'shoe'
+}
+
+/**
+ * Resolves the default active gear id for a given cardio sport.
+ * Prefers default gear matching the sport category, then first matching active gear,
+ * then any default active gear, or '' if none found.
+ */
+export function resolveDefaultGearForSport(gearList, sport) {
+  const active = getActiveGear(gearList)
+  if (active.length === 0) return ''
+  const cat = gearCategoryForSport(sport)
+  const matching = active.filter(g => g.type === cat)
+  const defMatch = matching.find(g => g.isDefault)
+  if (defMatch) return defMatch.id
+  if (matching.length > 0) return matching[0].id
+  const anyDef = active.find(g => g.isDefault)
+  return anyDef ? anyDef.id : ''
 }
 
 /**
@@ -60,7 +100,7 @@ export function normalizeGearItem(data = {}) {
  */
 export function isGearDueRetirement(gear) {
   if (!gear || typeof gear !== 'object') return false
-  if (gear.isRetired) return false
+  if (isGearRetired(gear)) return false
   const max =
     gear.maxDistanceM != null && Number(gear.maxDistanceM) > 0
       ? Number(gear.maxDistanceM)
@@ -232,6 +272,14 @@ export function addGear(gearData, set, get) {
   return item
 }
 
+function applyGearPatch(item, patch) {
+  const next = { ...item, ...patch }
+  if (patch && patch.isRetired === false && !('retired' in patch)) {
+    delete next.retired
+  }
+  return next
+}
+
 /**
  * Updates an existing gear item.
  * Signature: updateGear(id, patch, set, get)
@@ -246,7 +294,7 @@ export function updateGear(id, patch = {}, set, get) {
     if (!list) return null
     const idx = list.findIndex(g => g.id === targetId)
     if (idx === -1) return null
-    list[idx] = { ...list[idx], ...patchObj }
+    list[idx] = applyGearPatch(list[idx], patchObj)
     return list[idx]
   }
 
@@ -264,7 +312,7 @@ export function updateGear(id, patch = {}, set, get) {
         if (!Array.isArray(s.gear)) s.gear = []
         const idx = s.gear.findIndex(g => g.id === id)
         if (idx !== -1) {
-          s.gear[idx] = { ...s.gear[idx], ...patch }
+          s.gear[idx] = applyGearPatch(s.gear[idx], patch)
           updated = { ...s.gear[idx] }
         }
       })
@@ -276,7 +324,7 @@ export function updateGear(id, patch = {}, set, get) {
       const list = Array.isArray(S?.gear) ? [...S.gear] : []
       const idx = list.findIndex(g => g.id === id)
       if (idx !== -1) {
-        list[idx] = { ...list[idx], ...patch }
+        list[idx] = applyGearPatch(list[idx], patch)
         updated = { ...list[idx] }
         if (st?.S) set({ ...st, S: { ...st.S, gear: list } })
         else set({ ...st, gear: list })
@@ -292,7 +340,7 @@ export function updateGear(id, patch = {}, set, get) {
       const list = [...S.gear]
       const idx = list.findIndex(g => g.id === id)
       if (idx !== -1) {
-        list[idx] = { ...list[idx], ...patch }
+        list[idx] = applyGearPatch(list[idx], patch)
         updated = { ...list[idx] }
         if (state?.S) return { ...state, S: { ...state.S, gear: list } }
         return { ...state, gear: list }

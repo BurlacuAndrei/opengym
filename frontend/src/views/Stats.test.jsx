@@ -6,6 +6,7 @@ import History from './History.jsx'
 import Calendar from '../components/Calendar.jsx'
 import { useStore, DEF } from '../store/useStore.js'
 import { setNav } from '../lib/nav.js'
+import { fmtDate } from '../lib/format.js'
 
 vi.mock('../store/useStore.js', async importOriginal => {
   const actual = await importOriginal()
@@ -110,6 +111,40 @@ describe('Segmented Multi-Sport Stats, History & Calendar (Issue #97)', () => {
     expect(html).toContain('Sport breakdown')
     expect(html).toContain('Personal records')
     expect(html).toContain('5k')
+    expect(html).toContain('6:00 /km')
+  })
+
+  it('renders Cardio PR dates cleanly for ISO startTime and numeric epoch without d or Invalid Date', () => {
+    const isoStart = '2026-11-12T14:30:00Z'
+    const numStart = 1731400000000
+    useStore.setState({
+      S: {
+        ...JSON.parse(JSON.stringify(sampleState)),
+        cardioActivities: [
+          {
+            id: 'c-num',
+            type: 'run',
+            cardioType: 'run',
+            name: 'Epoch Run',
+            startTime: numStart,
+            durationMs: 300000,
+            distanceM: 1200,
+          },
+        ],
+        personalRecords: {
+          '5k': {
+            target: 5000,
+            label: '5k',
+            elapsedTime: 1320,
+            startTime: isoStart,
+          },
+        },
+      },
+    })
+    const html = renderToStaticMarkup(React.createElement(Stats, { initialTab: 'cardio' }))
+    expect(html).toContain(fmtDate(numStart, true))
+    expect(html).toContain(fmtDate(isoStart, true))
+    expect(html).not.toContain('Invalid Date')
   })
 
   it('renders Stats Strength tab with Tonnage, Muscle balance, Exercise progress, and Effort', () => {
@@ -131,6 +166,8 @@ describe('Segmented Multi-Sport Stats, History & Calendar (Issue #97)', () => {
     expect(html).toContain('pillar-cardio')
     expect(html).toContain('pillar-flow')
     expect(html).toContain('Morning Run')
+    expect(html).toContain('6:00 min/km')
+    expect(html).not.toContain('360:00')
     expect(html).toContain('Morning Flow')
     expect(html).toContain('Push Day')
   })

@@ -16,30 +16,30 @@ import {
 } from './coach-byok.js'
 import * as byokModule from './coach-byok.js'
 
-let mockMobile = false
-let mockDemo = false
-const mockApi = vi.fn()
+const { mockFlags, mockApi, mockDemoMod } = vi.hoisted(() => ({
+  mockFlags: { mobile: false, demo: false },
+  mockApi: vi.fn(),
+  mockDemoMod: {
+    demoStatus: vi.fn(() => ({ job: null, pending: null, cap: { used: 0, limit: 0 } })),
+    demoReview: vi.fn(() => ({ ok: true, job: null })),
+    demoPlan: vi.fn(() => ({ ok: true, job: null })),
+    demoRefine: vi.fn(() => ({ ok: true, job: null })),
+    demoResolve: vi.fn(() => ({ ok: true })),
+    demoDisclosure: vi.fn(() => ({ provider: 'demo', providerLabel: 'Demo Coach', categories: ['plan'] }))
+  }
+}))
 
 vi.mock('./mobile.js', () => ({
-  get MOBILE() { return mockMobile }
+  get MOBILE() { return mockFlags.mobile }
 }))
 
 vi.mock('./demo.js', () => ({
-  get DEMO() { return mockDemo }
+  get DEMO() { return mockFlags.demo }
 }))
 
 vi.mock('./api.js', () => ({
   api: (...args) => mockApi(...args)
 }))
-
-const mockDemoMod = {
-  demoStatus: vi.fn(() => ({ job: null, pending: null, cap: { used: 0, limit: 0 } })),
-  demoReview: vi.fn(() => ({ ok: true, job: null })),
-  demoPlan: vi.fn(() => ({ ok: true, job: null })),
-  demoRefine: vi.fn(() => ({ ok: true, job: null })),
-  demoResolve: vi.fn(() => ({ ok: true })),
-  demoDisclosure: vi.fn(() => ({ provider: 'demo', providerLabel: 'Demo Coach', categories: ['plan'] }))
-}
 
 vi.mock('./coach-demo.js', () => mockDemoMod)
 
@@ -62,8 +62,8 @@ import {
 describe('coach-api unified client dispatch and hooks', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
-    mockMobile = false
-    mockDemo = false
+    mockFlags.mobile = false
+    mockFlags.demo = false
     resetCachedByokKey()
     setStorageBackend(createMemoryStorageBackend())
     await clearByokKey()
@@ -86,20 +86,20 @@ describe('coach-api unified client dispatch and hooks', () => {
 
   describe('getActiveMode resolution & precedence', () => {
     it('resolves demo mode when DEMO is true', async () => {
-      mockDemo = true
+      mockFlags.demo = true
       expect(await getActiveMode()).toBe('demo')
     })
 
     it('resolves server mode when config.coach.enabled is true and user is logged in', async () => {
-      mockMobile = false
-      mockDemo = false
+      mockFlags.mobile = false
+      mockFlags.demo = false
       useStore.setState({ config: { coach: { enabled: true } }, user: { id: 'u1' } })
       expect(await getActiveMode()).toBe('server')
     })
 
     it('gives server mode strict precedence over mobile BYOK even if byok key exists', async () => {
-      mockMobile = true
-      mockDemo = false
+      mockFlags.mobile = true
+      mockFlags.demo = false
       await setByokKey('sk-ant-test-key')
       setCachedByokKey('sk-ant-test-key')
       useStore.setState({ config: { coach: { enabled: true } }, user: { id: 'u1' } })
@@ -108,8 +108,8 @@ describe('coach-api unified client dispatch and hooks', () => {
     })
 
     it('resolves byok mode on mobile when server coach is disabled and byok key is present', async () => {
-      mockMobile = true
-      mockDemo = false
+      mockFlags.mobile = true
+      mockFlags.demo = false
       await setByokKey('sk-ant-test-key')
       setCachedByokKey('sk-ant-test-key')
       useStore.setState({ config: { coach: { enabled: false } }, user: { id: 'u1' } })
@@ -118,8 +118,8 @@ describe('coach-api unified client dispatch and hooks', () => {
     })
 
     it('resolves byok mode on mobile for guest user (no user logged in) when byok key is present', async () => {
-      mockMobile = true
-      mockDemo = false
+      mockFlags.mobile = true
+      mockFlags.demo = false
       await setByokKey('sk-openai-key')
       setCachedByokKey('sk-openai-key')
       useStore.setState({ config: { coach: { enabled: true } }, user: null })
@@ -128,8 +128,8 @@ describe('coach-api unified client dispatch and hooks', () => {
     })
 
     it('falls back to server mode on web when coach is disabled', async () => {
-      mockMobile = false
-      mockDemo = false
+      mockFlags.mobile = false
+      mockFlags.demo = false
       useStore.setState({ config: { coach: { enabled: false } }, user: { id: 'u1' } })
 
       expect(await getActiveMode()).toBe('server')
@@ -138,8 +138,8 @@ describe('coach-api unified client dispatch and hooks', () => {
 
   describe('Server mode dispatch', () => {
     beforeEach(() => {
-      mockMobile = false
-      mockDemo = false
+      mockFlags.mobile = false
+      mockFlags.demo = false
       useStore.setState({ config: { coach: { enabled: true } }, user: { id: 'u1' } })
     })
 
@@ -206,8 +206,8 @@ describe('coach-api unified client dispatch and hooks', () => {
 
   describe('Android BYOK mode dispatch', () => {
     beforeEach(async () => {
-      mockMobile = true
-      mockDemo = false
+      mockFlags.mobile = true
+      mockFlags.demo = false
       await setByokKey('sk-ant-test-key')
       setCachedByokKey('sk-ant-test-key')
       useStore.setState({ config: { coach: { enabled: false } }, user: null })
@@ -304,8 +304,8 @@ describe('coach-api unified client dispatch and hooks', () => {
 
   describe('Demo mode dispatch', () => {
     beforeEach(() => {
-      mockDemo = true
-      mockMobile = false
+      mockFlags.demo = true
+      mockFlags.mobile = false
     })
 
     it('routes all Coach operations to demo handlers', async () => {
@@ -342,8 +342,8 @@ describe('coach-api unified client dispatch and hooks', () => {
     }
 
     it('returns true synchronously for Server Coach enabled with user', () => {
-      mockMobile = false
-      mockDemo = false
+      mockFlags.mobile = false
+      mockFlags.demo = false
       useStore.setState({ config: { coach: { enabled: true } }, user: { id: 'u1' } })
 
       const html = renderToStaticMarkup(React.createElement(AvailabilityProbe))
@@ -351,8 +351,8 @@ describe('coach-api unified client dispatch and hooks', () => {
     })
 
     it('returns false for web when Server Coach is not enabled', () => {
-      mockMobile = false
-      mockDemo = false
+      mockFlags.mobile = false
+      mockFlags.demo = false
       useStore.setState({ config: { coach: { enabled: false } }, user: { id: 'u1' } })
 
       const html = renderToStaticMarkup(React.createElement(AvailabilityProbe))
@@ -360,8 +360,8 @@ describe('coach-api unified client dispatch and hooks', () => {
     })
 
     it('returns true for Demo mode', () => {
-      mockDemo = true
-      mockMobile = false
+      mockFlags.demo = true
+      mockFlags.mobile = false
       useStore.setState({ config: { coach: { enabled: false } }, user: null })
 
       const html = renderToStaticMarkup(React.createElement(AvailabilityProbe))
@@ -369,8 +369,8 @@ describe('coach-api unified client dispatch and hooks', () => {
     })
 
     it('returns true on mobile when cached BYOK key is present', () => {
-      mockMobile = true
-      mockDemo = false
+      mockFlags.mobile = true
+      mockFlags.demo = false
       setCachedByokKey('sk-ant-test')
       useStore.setState({ config: { coach: { enabled: false } }, user: null })
 
@@ -379,8 +379,8 @@ describe('coach-api unified client dispatch and hooks', () => {
     })
 
     it('returns false on mobile when BYOK key is absent', () => {
-      mockMobile = true
-      mockDemo = false
+      mockFlags.mobile = true
+      mockFlags.demo = false
       setCachedByokKey(null)
       useStore.setState({ config: { coach: { enabled: false } }, user: null })
 
@@ -391,8 +391,8 @@ describe('coach-api unified client dispatch and hooks', () => {
 
   describe('useCoachStatus hook in Android BYOK mode', () => {
     it('subscribes to in-memory status transitions without timers', async () => {
-      mockMobile = true
-      mockDemo = false
+      mockFlags.mobile = true
+      mockFlags.demo = false
       await setByokKey('sk-ant-test-key')
       setCachedByokKey('sk-ant-test-key')
       useStore.setState({ config: { coach: { enabled: false } }, user: null })

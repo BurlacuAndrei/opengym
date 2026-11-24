@@ -2,6 +2,8 @@ package ch.duartesantos.opengym
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.core.content.ContextCompat
 import com.getcapacitor.JSObject
 import com.getcapacitor.PermissionState
@@ -53,6 +55,33 @@ class BackgroundLocationPlugin : Plugin() {
         val intent = Intent(context, BackgroundLocationService::class.java)
         context.stopService(intent)
         call.resolve()
+    }
+
+    @PluginMethod
+    fun openSettings(call: PluginCall) {
+        val liveActivity = activity?.takeIf { !it.isFinishing && !it.isDestroyed }
+        val startIntent: (Intent) -> Unit = { intent ->
+            if (liveActivity != null) {
+                liveActivity.startActivity(intent)
+            } else {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+            }
+        }
+        try {
+            val appSettingsIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", context.packageName, null)
+            }
+            startIntent(appSettingsIntent)
+            call.resolve(JSObject().put("opened", true))
+        } catch (_: Exception) {
+            try {
+                startIntent(Intent(Settings.ACTION_SETTINGS))
+                call.resolve(JSObject().put("opened", true))
+            } catch (_: Exception) {
+                call.reject("Unable to open settings")
+            }
+        }
     }
 
     private fun startLocationService() {

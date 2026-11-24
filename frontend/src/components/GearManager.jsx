@@ -8,6 +8,8 @@ import {
   DEFAULT_THRESHOLDS,
   DEFAULT_SHOE_MAX_DISTANCE_M,
   DEFAULT_BIKE_MAX_DISTANCE_M,
+  isGearRetired,
+  getActiveGear,
   isGearDueRetirement,
   getGearWearPercent,
   addGear,
@@ -40,8 +42,8 @@ export default function GearManager({ close, gear: propGear, unit: propUnit, inl
   const [initialDistanceInput, setInitialDistanceInput] = useState('')
   const [formError, setFormError] = useState('')
 
-  const activeGear = gearList.filter(g => !g.isRetired)
-  const retiredGear = gearList.filter(g => g.isRetired)
+  const activeGear = getActiveGear(gearList)
+  const retiredGear = (Array.isArray(gearList) ? gearList : []).filter(isGearRetired)
 
   const handleTypeChange = newType => {
     setType(newType)
@@ -148,7 +150,7 @@ export default function GearManager({ close, gear: propGear, unit: propUnit, inl
         />
         <Button
           variant={showAddForm ? 'plain' : 'primary'}
-          size="small"
+          size="sm"
           onClick={() => setShowAddForm(v => !v)}
         >
           {showAddForm ? t('Cancel') : `+ ${t('Add Gear')}`}
@@ -320,10 +322,10 @@ export default function GearManager({ close, gear: propGear, unit: propUnit, inl
 
                   {/* Retire / Reactivate / Default Action */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    {!item.isRetired && (
+                    {!isGearRetired(item) && (
                       <Button
                         variant={item.isDefault ? 'tinted' : 'plain'}
-                        size="small"
+                        size="sm"
                         aria-pressed={!!item.isDefault}
                         onClick={() => handleSetDefault(item.id)}
                       >
@@ -331,10 +333,10 @@ export default function GearManager({ close, gear: propGear, unit: propUnit, inl
                         <span>{item.isDefault ? t('Default') : t('Set default')}</span>
                       </Button>
                     )}
-                    {item.isRetired ? (
+                    {isGearRetired(item) ? (
                       <Button
                         variant="plain"
-                        size="small"
+                        size="sm"
                         onClick={() => handleReactivate(item.id)}
                       >
                         {t('Reactivate')}
@@ -342,7 +344,7 @@ export default function GearManager({ close, gear: propGear, unit: propUnit, inl
                     ) : (
                       <Button
                         variant="plain"
-                        size="small"
+                        size="sm"
                         onClick={() => handleRetire(item.id)}
                       >
                         {t('Retire')}

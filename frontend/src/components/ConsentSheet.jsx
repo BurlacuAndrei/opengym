@@ -122,7 +122,7 @@ export default function ConsentSheet({
         </div>
       </div>
 
-      <div className="sect-b" style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
+      <div className="card" style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
         {/* Data destination / Jurisdiction */}
         {feature?.jurisdiction && (
           <div>

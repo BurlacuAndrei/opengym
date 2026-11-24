@@ -929,4 +929,10 @@ export default {
   "Could not recover cardio activity": "Could not recover cardio activity",
   "Restore & Save": "पुनर्स्थापित करें और सहेजें",
   "Recovery log discarded": "रिकवरी लॉग रद्द किया गया",
+  "Location permission denied": "लोकेशन अनुमति अस्वीकृत",
+  "Open Settings": "सेटिंग खोलें",
+  "Open Settings → Permissions → Location to allow location access for GPS cardio, or log cardio manually.": "GPS कार्डियो के लिए लोकेशन एक्सेस की अनुमति देने के लिए सेटिंग → अनुमतियाँ → लोकेशन खोलें, या कार्डियो मैन्युअल रूप से दर्ज करें।",
+  "Enable location access in your browser site settings to record GPS cardio, or log cardio manually.": "GPS कार्डियो रिकॉर्ड करने के लिए अपने ब्राउज़र की साइट सेटिंग में लोकेशन एक्सेस चालू करें, या कार्डियो मैन्युअल रूप से दर्ज करें।",
+  "GPS unavailable": "GPS उपलब्ध नहीं है",
+  "Could not start GPS tracking on this device. Try again or log cardio manually.": "इस डिवाइस पर GPS ट्रैकिंग शुरू नहीं हो सकी। पुनः प्रयास करें या कार्डियो मैन्युअल रूप से दर्ज करें।",
 }

@@ -1,7 +1,8 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { t } from '../lib/i18n.js'
 import Icon from './Icon.jsx'
-import { Button, Segmented, TextField, TextArea, NumberField } from './ui.jsx'
+import { Button, Segmented, TextArea, NumberField } from './ui.jsx'
+import { getActiveGear, isGearRetired, resolveDefaultGearForSport } from '../lib/gear.js'
 import { useUI } from '../store/useUI.js'
 import {
   useStore,
@@ -63,10 +64,12 @@ export default function ManualCardioSheet({
   const toast = useUI?.getState?.()?.toast || (() => {})
 
   const isEdit = Boolean(activity && activity.id)
-
-  const [type, setType] = useState(
+  const initialType =
     activity?.type && CARDIO_TYPES.includes(activity.type) ? activity.type : 'run'
-  )
+  const allGear = Array.isArray(S.gear) ? S.gear : []
+  const activeGear = getActiveGear(allGear)
+
+  const [type, setType] = useState(initialType)
   const [startTime, setStartTime] = useState(() =>
     toDatetimeLocal(activity?.startTime)
   )
@@ -98,9 +101,36 @@ export default function ManualCardioSheet({
   const [rpe, setRpe] = useState(() =>
     activity?.rpe != null ? activity.rpe : null
   )
-  const [gearId, setGearId] = useState(() => activity?.gearId || '')
+  const [gearTouched, setGearTouched] = useState(false)
+  const [gearId, setGearId] = useState(() => {
+    const raw = typeof activity?.gearId === 'string' ? activity.gearId.trim() : ''
+    if (raw) {
+      const byId = allGear.find(g => g && g.id === raw)
+      if (byId) return byId.id
+      const lower = raw.toLowerCase()
+      const byName = allGear.find(
+        g => g && typeof g.name === 'string' && g.name.trim().toLowerCase() === lower
+      )
+      if (byName && byName.id) return byName.id
+      return raw
+    }
+    return isEdit ? '' : resolveDefaultGearForSport(allGear, initialType)
+  })
   const [notes, setNotes] = useState(() => activity?.notes || '')
   const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (!isEdit && !gearTouched) {
+      setGearId(resolveDefaultGearForSport(S.gear, type))
+    }
+  }, [type, gearTouched, isEdit, S.gear])
+
+  const hasSelectedActive = Boolean(gearId && activeGear.some(g => g.id === gearId))
+  const fallbackGearItem =
+    gearId && !hasSelectedActive ? allGear.find(g => g && g.id === gearId) : null
+  const fallbackGearLabel = fallbackGearItem
+    ? `${fallbackGearItem.name || t('Gear')}${isGearRetired(fallbackGearItem) ? ` (${t('Retired')})` : ''}`
+    : gearId
 
   // Live metrics calculation
   const durSecTotal = (Number(durMin) || 0) * 60 + (Number(durSec) || 0)
@@ -196,41 +226,43 @@ export default function ManualCardioSheet({
         </label>
         <input
           type="datetime-local"
-          className="num"
-          style={{ width: '100%', padding: '8px 12px', borderRadius: 8 }}
+          className="field num"
           value={startTime}
           onChange={e => setStartTime(e.target.value)}
         />
       </div>
 
-      <div className="row" style={{ gap: 10, marginBottom: 12 }}>
-        <div style={{ flex: 1 }}>
+      <div className="row" style={{ gap: 10, marginBottom: 12, alignItems: 'flex-end' }}>
+        <div style={{ flex: '1 1 0', minWidth: 0 }}>
           <label className="muted small" style={{ display: 'block', marginBottom: 4 }}>
             {t('Duration (min)')}
           </label>
           <NumberField
+            className="field"
             placeholder="0"
             value={durMin}
             onChange={setDurMin}
             decimal={false}
           />
         </div>
-        <div style={{ width: 80 }}>
+        <div style={{ flex: '0 0 76px', minWidth: 0 }}>
           <label className="muted small" style={{ display: 'block', marginBottom: 4 }}>
             {t('Sec')}
           </label>
           <NumberField
+            className="field"
             placeholder="0"
             value={durSec}
             onChange={setDurSec}
             decimal={false}
           />
         </div>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: '1 1 0', minWidth: 0 }}>
           <label className="muted small" style={{ display: 'block', marginBottom: 4 }}>
             {t('Distance ({0})', dUnit)}
           </label>
           <NumberField
+            className="field"
             placeholder="0.00"
             value={dist}
             onChange={setDist}
@@ -261,12 +293,13 @@ export default function ManualCardioSheet({
         </div>
       )}
 
-      <div className="row" style={{ gap: 10, marginBottom: 12 }}>
-        <div style={{ flex: 1 }}>
+      <div className="row" style={{ gap: 10, marginBottom: 12, alignItems: 'flex-end' }}>
+        <div style={{ flex: '1 1 0', minWidth: 0 }}>
           <label className="muted small" style={{ display: 'block', marginBottom: 4 }}>
             {t('Elevation Gain ({0})', eUnit)}
           </label>
           <NumberField
+            className="field"
             placeholder="0"
             value={elevation}
             onChange={setElevation}
@@ -274,11 +307,12 @@ export default function ManualCardioSheet({
             nullable={true}
           />
         </div>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: '1 1 0', minWidth: 0 }}>
           <label className="muted small" style={{ display: 'block', marginBottom: 4 }}>
             {t('Calories (kcal)')}
           </label>
           <NumberField
+            className="field"
             placeholder="0"
             value={calories}
             onChange={setCalories}
@@ -312,14 +346,39 @@ export default function ManualCardioSheet({
       </div>
 
       <div style={{ marginBottom: 12 }}>
-        <label className="muted small" style={{ display: 'block', marginBottom: 4 }}>
-          {t('Gear / Shoes (optional)')}
+        <label
+          htmlFor="manual-cardio-gear"
+          className="muted small"
+          style={{ display: 'block', marginBottom: 4 }}
+        >
+          {t('Active Gear')}
         </label>
-        <TextField
-          placeholder={t('e.g. Pegasus 40, Gravel Bike')}
+        <select
+          id="manual-cardio-gear"
+          data-testid="manual-gear-selector"
+          className="field"
           value={gearId}
-          onChange={e => setGearId(e.target.value)}
-        />
+          disabled={activeGear.length === 0 && !gearId}
+          onChange={e => {
+            setGearTouched(true)
+            setGearId(e.target.value)
+          }}
+        >
+          <option value="">{t('No gear selected')}</option>
+          {gearId && !hasSelectedActive && (
+            <option value={gearId}>{fallbackGearLabel}</option>
+          )}
+          {activeGear.map(g => (
+            <option key={g.id} value={g.id}>
+              {g.name || t('Gear')}{g.isDefault ? ` (${t('Default')})` : ''}
+            </option>
+          ))}
+        </select>
+        {activeGear.length === 0 && !gearId && (
+          <div className="muted small" style={{ marginTop: 4 }}>
+            {t('No active gear yet. Track mileage on your running shoes and bikes.')}
+          </div>
+        )}
       </div>
 
       <div style={{ marginBottom: 14 }}>

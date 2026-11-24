@@ -929,4 +929,10 @@ export default {
   "Could not recover cardio activity": "Could not recover cardio activity",
   "Restore & Save": "Kurtar ve Kaydet",
   "Recovery log discarded": "Kurtarma kaydı silindi",
+  "Location permission denied": "Konum izni reddedildi",
+  "Open Settings": "Ayarları Aç",
+  "Open Settings → Permissions → Location to allow location access for GPS cardio, or log cardio manually.": "GPS ile kardiyo için konum erişimine izin vermek üzere Ayarlar → İzinler → Konum'u açın ya da kardiyoyu manuel kaydedin.",
+  "Enable location access in your browser site settings to record GPS cardio, or log cardio manually.": "GPS ile kardiyo kaydetmek için tarayıcınızın site ayarlarından konum erişimini etkinleştirin ya da kardiyoyu manuel kaydedin.",
+  "GPS unavailable": "GPS kullanılamıyor",
+  "Could not start GPS tracking on this device. Try again or log cardio manually.": "Bu cihazda GPS takibi başlatılamadı. Tekrar deneyin veya kardiyoyu manuel kaydedin.",
 }

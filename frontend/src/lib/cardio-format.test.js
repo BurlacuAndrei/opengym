@@ -38,6 +38,7 @@ import {
   formatPaceTime,
   formatPace,
   fmtPace,
+  fmtPaceSec,
   formatSpeed,
   fmtSpeed,
   formatElevation,
@@ -278,6 +279,32 @@ describe('Formatting Functions', () => {
       expect(formatPace(null)).toBe('')
       expect(fmtPace(null)).toBe('')
       expect(formatPace(0)).toBe('')
+    })
+  })
+
+  describe('fmtPaceSec', () => {
+    it('formats seconds/km in metric', () => {
+      expect(fmtPaceSec(360, 'kg')).toBe('6:00 min/km')
+      expect(fmtPaceSec(300, 'kg', { short: true })).toBe('5:00 /km')
+      expect(fmtPaceSec('360', 'kg')).toBe('6:00 min/km')
+    })
+
+    it('formats seconds/km in imperial for both lbs and lb', () => {
+      expect(fmtPaceSec(360, 'lbs')).toBe('9:39 min/mi')
+      expect(fmtPaceSec(360, 'lb')).toBe('9:39 min/mi')
+      expect(fmtPaceSec(300, 'lbs', { short: true })).toBe('8:03 /mi')
+      expect(fmtPaceSec(300, 'lb', { short: true })).toBe('8:03 /mi')
+    })
+
+    it('handles rollover and sub-minute paces', () => {
+      expect(fmtPaceSec(359.8, 'kg')).toBe('6:00 min/km')
+      expect(fmtPaceSec(30, 'kg')).toBe('0:30 min/km')
+    })
+
+    it('returns empty string on empty or invalid inputs', () => {
+      for (const bad of [0, null, undefined, -5, NaN, Infinity, '', 'abc']) {
+        expect(fmtPaceSec(bad, 'kg')).toBe('')
+      }
     })
   })
 

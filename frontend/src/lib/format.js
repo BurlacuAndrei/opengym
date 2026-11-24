@@ -13,7 +13,32 @@ export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', '
 export const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
 export function fmtDate(iso, long) {
-  const d = new Date(iso + 'T12:00:00')
+  if (iso == null || iso === '' || typeof iso === 'boolean') return ''
+  let d
+  if (iso instanceof Date) {
+    d = iso
+  } else if (typeof iso === 'number') {
+    if (!Number.isFinite(iso) || iso <= 0) return ''
+    d = new Date(iso)
+  } else if (typeof iso === 'string') {
+    const s = iso.trim()
+    if (!s) return ''
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+    if (m) {
+      const y = Number(m[1])
+      const mo = Number(m[2])
+      const day = Number(m[3])
+      d = new Date(y, mo - 1, day, 12, 0, 0)
+      if (d.getFullYear() !== y || d.getMonth() !== mo - 1 || d.getDate() !== day) return ''
+    } else if (!/^\d+$/.test(s) && !/^\d{4}-\d{2}$/.test(s)) {
+      d = new Date(s)
+    } else {
+      return ''
+    }
+  } else {
+    return ''
+  }
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return ''
   return d.toLocaleDateString(dateLocale(), long ? { weekday: 'short', day: 'numeric', month: 'short' } : { day: 'numeric', month: 'short' })
 }
 export function fmtDur(ms) {
@@ -44,4 +69,4 @@ export function weekKey(d) {
 export const localTZ = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' } catch { return 'UTC' } }
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
-export const ACCENTS = { lime: '#30d158', sky: '#0a84ff', orange: '#ff9f0a', violet: '#bf5af2', pink: '#ff375f', red: '#ff453a', teal: '#40c8e0', gold: '#ffd60a' }
+export { ACCENTS } from './theme.js'

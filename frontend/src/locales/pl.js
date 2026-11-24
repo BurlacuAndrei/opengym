@@ -929,4 +929,10 @@ export default {
   "Could not recover cardio activity": "Could not recover cardio activity",
   "Restore & Save": "Przywróć i zapisz",
   "Recovery log discarded": "Dziennik odzyskiwania odrzucony",
+  "Location permission denied": "Odmowa dostępu do lokalizacji",
+  "Open Settings": "Otwórz ustawienia",
+  "Open Settings → Permissions → Location to allow location access for GPS cardio, or log cardio manually.": "Otwórz Ustawienia → Uprawnienia → Lokalizacja, aby zezwolić na dostęp do lokalizacji dla cardio z GPS, albo zapisz cardio ręcznie.",
+  "Enable location access in your browser site settings to record GPS cardio, or log cardio manually.": "Włącz dostęp do lokalizacji w ustawieniach witryny przeglądarki, aby rejestrować cardio z GPS, albo zapisz cardio ręcznie.",
+  "GPS unavailable": "GPS niedostępny",
+  "Could not start GPS tracking on this device. Try again or log cardio manually.": "Nie udało się uruchomić śledzenia GPS na tym urządzeniu. Spróbuj ponownie lub zapisz cardio ręcznie.",
 }

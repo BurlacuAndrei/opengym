@@ -4,7 +4,7 @@ import { useStore } from '../store/useStore.js'
 import { effectiveDaySessions, unifiedHistory, streakWeeks, lastBW } from '../lib/history.js'
 import { fmtNum, fmtDate, fmtDur, fmtVol, todayISO, isoOf, weekKey, DAYS } from '../lib/format.js'
 import { formatCardioTarget } from '../lib/cardio-plan.js'
-import { fmtDist as fmtCardioDist, fmtPace, formatSpeed, defaultRateMetric } from '../lib/cardio-format.js'
+import { fmtDist as fmtCardioDist, fmtPaceSec, formatSpeed, defaultRateMetric } from '../lib/cardio-format.js'
 import { getRoutineKind } from '../lib/routine-kind.js'
 import { STARTER_PLANS, applyStarterPlan } from '../lib/starter.js'
 import { t, dateLocale } from '../lib/i18n.js'
@@ -117,15 +117,7 @@ export default function Home() {
     toast?.(t('{0} plan loaded', t(tpl.name)))
   }
 
-  return <div className="narrow">
-    <div className="hdr">
-      <div>
-        <h1>{user ? t('Hi {0}', user.name) : 'openGym'}</h1>
-        <div className="sub">{today.toLocaleDateString(dateLocale(), { weekday: 'long', day: 'numeric', month: 'long' })}</div>
-      </div>
-      <button className="iconbtn" onClick={() => nav('/settings')} aria-label={t('Settings')}><Icon name="gear" /></button>
-    </div>
-
+  const todayCard = (
     <div className="card" data-testid="home-today-card">
       <div className="row between" style={{ marginBottom: 8 }}>
         <button className="iconbtn" style={{ width: 30, height: 30, fontSize: 15 }} onClick={() => setWeekOffset(w => w - 1)} aria-label="Previous week"><Icon name="chevronLeft" /></button>
@@ -138,9 +130,9 @@ export default function Home() {
         <div className="lbl2">
           {t('Today')}{todayInfo.isOverride && hasTodayScheduled ? ' · ' + t('rescheduled') : ''}
         </div>
-        <button type="button" className="btn plain" style={{ padding: '2px 8px', fontSize: 12, height: 24 }} onClick={() => dayOverrideSheet(todayStr)}>
+        <Button type="button" size="sm" variant="plain" onClick={() => dayOverrideSheet(todayStr)}>
           {t('Adjust')}
-        </button>
+        </Button>
       </div>
 
       {S.active && (
@@ -223,44 +215,59 @@ export default function Home() {
         </div>
       )}
     </div>
+  )
+
+  return <div className="narrow">
+    <div className="hdr">
+      <div>
+        <h1>{user ? t('Hi {0}', user.name) : 'openGym'}</h1>
+        <div className="sub">{today.toLocaleDateString(dateLocale(), { weekday: 'long', day: 'numeric', month: 'long' })}</div>
+      </div>
+      <button className="iconbtn" onClick={() => nav('/settings')} aria-label={t('Settings')}><Icon name="gear" /></button>
+    </div>
+
+    {!isEmptyProfile && todayCard}
 
     {coachOn && <CoachCard nav={nav} />}
 
     {isEmptyProfile && (
-      <div className="card" data-testid="home-onboarding-chooser">
-        <div className="row" style={{ gap: 10, marginBottom: 6 }}>
-          <span className="lrow-i" style={{ '--tint': 'var(--acc)' }}><Icon name="sparkles" /></span>
-          <div className="big" style={{ fontSize: 22 }}>{t('Welcome!')}</div>
-        </div>
-        <div className="muted small" style={{ marginBottom: 12 }}>
-          {t('Choose a starter plan tailored to your training focus — or let the Coach build one.')}
-        </div>
-        {coachOn && <>
-          <Button variant="primary" icon="sparkles" onClick={() => nav(hasConsent(S) ? '/coach/intake' : '/coach')}>{t('Let the Coach build it')}</Button>
-          <div style={{ height: 10 }} />
-        </>}
-        <div className="list" style={{ margin: '0 -4px' }}>
-          {STARTER_PLANS.map(tpl => (
-            <div
-              key={tpl.id}
-              className="item"
-              data-testid={`starter-option-${tpl.id}`}
-              onClick={() => handleChooseStarter(tpl)}
-            >
-              <span className="lrow-i" style={{ '--tint': tpl.id === 'endurance' ? 'var(--pillar-cardio)' : tpl.id === 'mobility' ? 'var(--pillar-flow)' : 'var(--pillar-strength)' }}>
-                <Icon name={tpl.emoji} />
-              </span>
-              <div className="grow">
-                <div className="tt">{t(tpl.name)}</div>
-                <div className="ss">{t(tpl.description)}</div>
+      <>
+        <div className="card" data-testid="home-onboarding-chooser">
+          <div className="row" style={{ gap: 10, marginBottom: 6 }}>
+            <span className="lrow-i" style={{ '--tint': 'var(--acc)' }}><Icon name="sparkles" /></span>
+            <div className="big" style={{ fontSize: 22 }}>{t('Welcome!')}</div>
+          </div>
+          <div className="muted small" style={{ marginBottom: 12 }}>
+            {t('Choose a starter plan tailored to your training focus — or let the Coach build one.')}
+          </div>
+          {coachOn && <>
+            <Button variant="primary" icon="sparkles" onClick={() => nav(hasConsent(S) ? '/coach/intake' : '/coach')}>{t('Let the Coach build it')}</Button>
+            <div style={{ height: 10 }} />
+          </>}
+          <div className="list" style={{ margin: '0 -4px' }}>
+            {STARTER_PLANS.map(tpl => (
+              <div
+                key={tpl.id}
+                className="item"
+                data-testid={`starter-option-${tpl.id}`}
+                onClick={() => handleChooseStarter(tpl)}
+              >
+                <span className="lrow-i" style={{ '--tint': tpl.id === 'endurance' ? 'var(--pillar-cardio)' : tpl.id === 'mobility' ? 'var(--pillar-flow)' : 'var(--pillar-strength)' }}>
+                  <Icon name={tpl.emoji} />
+                </span>
+                <div className="grow">
+                  <div className="tt">{t(tpl.name)}</div>
+                  <div className="ss">{t(tpl.description)}</div>
+                </div>
+                <span className="tag acc">{t('Load')}</span>
               </div>
-              <span className="tag acc">{t('Load')}</span>
-            </div>
-          ))}
+            ))}
+          </div>
+          <div style={{ height: 10 }} />
+          <Button onClick={() => nav('/plan')}>{t('Build my own plan')}</Button>
         </div>
-        <div style={{ height: 10 }} />
-        <Button onClick={() => nav('/plan')}>{t('Build my own plan')}</Button>
-      </div>
+        {todayCard}
+      </>
     )}
 
     <div className="card" data-testid="home-week-glance">
@@ -325,7 +332,7 @@ export default function Home() {
               const metric = defaultRateMetric(cType)
               const rateBadge = metric === 'speed'
                 ? (item.avgSpeedKmh ? formatSpeed(item.avgSpeedKmh, normUnit) : null)
-                : (item.avgPaceSecKm ? fmtPace(item.avgPaceSecKm, normUnit) : null)
+                : (fmtPaceSec(item.avgPaceSecKm, normUnit) || null)
               return (
                 <div key={item.id} className="item" onClick={() => nav('/cardio/' + item.id)}>
                   <span className="lrow-i" style={{ '--tint': pMeta.tint }}><Icon name={cardioIcon(cType)} /></span>

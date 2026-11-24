@@ -3,11 +3,12 @@ import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'r
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
 import { bindUI, Button } from './components/ui.jsx'
-import { ACCENTS, fmtDur } from './lib/format.js'
+import { fmtDur } from './lib/format.js'
 import { t, setLang, useLang } from './lib/i18n.js'
 import { passkeyLogin } from './lib/api.js'
 import { setNav, nav } from './lib/nav.js'
-import { applyTheme } from './lib/theme.js'
+import { syncThemeEffect } from './lib/theme.js'
+export { syncThemeEffect }
 import { useWakeLock } from './lib/wakelock.js'
 import {
   checkRecoveryLog,
@@ -81,26 +82,6 @@ export function SessionExpiredBanner({ onSignIn }) {
   )
 }
 
-function applyPrefs(theme, accent) {
-  applyTheme(theme)
-  document.documentElement.dataset.accent = ACCENTS[accent] ? accent : 'lime'
-}
-
-export function syncThemeEffect(theme, accent) {
-  applyPrefs(theme, accent)
-  if (theme !== 'system' || typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
-  const mql = window.matchMedia('(prefers-color-scheme: dark)')
-  const onChange = e => applyTheme('system', e && typeof e.matches === 'boolean' ? e : mql)
-  if (typeof mql.addEventListener === 'function') {
-    mql.addEventListener('change', onChange)
-    return () => mql.removeEventListener('change', onChange)
-  }
-  if (typeof mql.addListener === 'function') {
-    mql.addListener(onChange)
-    return () => mql.removeListener(onChange)
-  }
-}
-
 export async function checkAndPromptCardioRecovery({
   checkFn = checkRecoveryLog,
   openSheetFn = fn => useUI.getState().openSheet(fn),
@@ -156,10 +137,10 @@ export async function checkAndPromptCardioRecovery({
   return recovered
 }
 
-function Shell() {
+export function Shell() {
   const navigate = useNavigate()
   const loc = useLocation()
-  const { S, user, ready } = useStore()
+  const { S, user, ready, nativeReady } = useStore()
   const isGuest = useStore(s => s.isGuest())
   const sessionExpired = useStore(s => Boolean(s.sessionExpired || s.reAuthNeeded))
   const langV = useLang()   // re-renders the whole shell when the language (pack) changes
@@ -179,7 +160,7 @@ function Shell() {
   useWakeLock(!!S.active && S.keepAwake !== false)
 
   const authed = user || isGuest
-  if (!ready && !authed) return (
+  if ((!ready && !authed) || !nativeReady) return (
     <div id="app">
       <div style={{ paddingTop: '44vh', display: 'flex', justifyContent: 'center', fontSize: 34, color: 'var(--label-3)' }}>
         <Icon name="dumbbell" />
