@@ -1,11 +1,40 @@
 import { useEffect, useRef } from 'react'
 import { useUI } from '../store/useUI.js'
+import { isEscape, firstFocusable, restoreFocus } from '../lib/sheet-focus.js'
 
 // One bottom sheet (or centered dialog) with swipe-to-dismiss.
 function Sheet({ sheet }) {
   const { closeSheet } = useUI()
   const ref = useRef(null)
+  const wrap = useRef(null)
   const drag = useRef({ startY: null, delta: 0 })
+
+  // Escape-to-close, focus trap and focus restore (issue #103) — shared by both kinds.
+  // Only the top of the stack reacts, so stacked sheets close top-first and never
+  // steal focus from each other. `locked` is read fresh from the store each event.
+  useEffect(() => {
+    const el = wrap.current
+    const prev = document.activeElement
+    const focusFirst = () => { const f = firstFocusable(el); if (f) f.focus() }
+    focusFirst()
+    const top = () => { const s = useUI.getState().sheets; return s[s.length - 1] }
+    const onKey = e => {
+      if (!isEscape(e)) return
+      const me = useUI.getState().sheets.find(x => x.id === sheet.id)
+      if (!me || me.locked || top().id !== sheet.id) return
+      closeSheet(sheet.id)
+    }
+    const onFocusIn = e => {
+      if (top().id === sheet.id && el && !el.contains(e.target)) focusFirst()
+    }
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('focusin', onFocusIn)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('focusin', onFocusIn)
+      restoreFocus(prev) // trigger may be gone — focus() on a detached element is a no-op
+    }
+  }, [])
 
   const onTouchStart = e => {
     const el = ref.current
@@ -47,14 +76,14 @@ function Sheet({ sheet }) {
   const close = () => closeSheet(sheet.id)
   if (sheet.kind === 'center') {
     return (
-      <div>
+      <div ref={wrap}>
         <div className="mback" onClick={() => { if (!sheet.locked) close() }} />
         <div className="center">{sheet.render(close)}</div>
       </div>
     )
   }
   return (
-    <div>
+    <div ref={wrap}>
       <div className="mback" onClick={() => { if (!sheet.locked) close() }} />
       <div className="sheet" ref={ref} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
         <div className="grab" />
