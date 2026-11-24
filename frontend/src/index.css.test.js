@@ -62,4 +62,22 @@ describe('index.css responsive shell', () => {
     expect(b).toContain('[data-testid="stats-overview-tab"]{display:grid')
     expect(b).toContain('[data-testid="stats-overview-tab"]>.tiles{grid-column:1/-1}')
   })
+
+  // Issue #115: Plan/Library/History desktop layouts. 768px grids stay as the
+  // week-schedule/routines and exercise/history 2-col layouts; at ≥1024px the
+  // equipment chips row wraps instead of clipping; mobile base is untouched.
+  it('768px block keeps the .cols and #app .list 2-col grids', () => {
+    const b = block('768px')
+    expect(b).toContain('.cols{display:grid;grid-template-columns:1fr 1fr')
+    expect(b).toContain('#app .list{display:grid;grid-template-columns:1fr 1fr')
+  })
+
+  it('1024px block wraps the equipment chips row (issue #115)', () => {
+    expect(block('1024px')).toContain('#app .chips{flex-wrap:wrap}')
+  })
+
+  it('base .list stays a flex column and base .chips stays scrollable (mobile guards)', () => {
+    expect(rule('.list')).toContain('display:flex;flex-direction:column')
+    expect(rule('.chips')).toContain('overflow-x:auto')
+  })
 })
