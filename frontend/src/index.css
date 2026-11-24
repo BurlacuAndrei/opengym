@@ -992,6 +992,13 @@ input[type="datetime-local"].field{display:block;min-height:48px}
   #sidebar{display:flex}
   #tabbar{display:none}
   #app{max-width:1080px;padding-top:32px;margin-left:calc(240px + 24px)}
+  .narrow.home{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+  .narrow.home>*{min-width:0}
+  .narrow.home>.hdr{grid-column:1/-1}
+  [data-testid="stats-overview-tab"]{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+  [data-testid="stats-overview-tab"]>*{min-width:0}
+  [data-testid="stats-overview-tab"]>.tiles{grid-column:1/-1}
+  [data-testid="stats-overview-tab"]>.card:has(.hm-wrap){grid-column:1/-1}
 }
 
 @media (max-width:400px){

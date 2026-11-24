@@ -218,7 +218,7 @@ export default function Home() {
     </div>
   )
 
-  return <div className="narrow">
+  return <div className="narrow home">
     <div className="hdr">
       <div>
         <h1>{user ? t('Hi {0}', user.name) : 'openGym'}</h1>

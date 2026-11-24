@@ -51,4 +51,15 @@ describe('index.css responsive shell', () => {
   it('#sidebar exists and is hidden below 1024px', () => {
     expect(css).toMatch(/#sidebar\{[^}]*display:none/)
   })
+
+  // Issue #114: Home + Stats overview become 2-col grids at ≥1024px only.
+  it('1024px block grids Home (.narrow.home) and Stats overview, mobile untouched', () => {
+    const b = block('1024px')
+    expect(b).toContain('.narrow.home{')
+    expect(b).toContain('grid-template-columns:1fr 1fr')
+    expect(b).toContain('align-items:start')
+    expect(b).toContain('.narrow.home>.hdr{grid-column:1/-1}')
+    expect(b).toContain('[data-testid="stats-overview-tab"]{display:grid')
+    expect(b).toContain('[data-testid="stats-overview-tab"]>.tiles{grid-column:1/-1}')
+  })
 })
