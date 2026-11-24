@@ -76,6 +76,15 @@ describe('index.css responsive shell', () => {
     expect(block('1024px')).toContain('#app .chips{flex-wrap:wrap}')
   })
 
+  // Issue #116: History master-detail at ≥1024px — list left, ActivityDetail side pane
+  // right; sheets dock right as desktop panels. Mobile base markup stays untouched.
+  it('1024px block has the .split master-detail grid and docks sheets right', () => {
+    const b = block('1024px')
+    expect(b).toContain('.split{display:grid;grid-template-columns:1fr minmax(0,520px)')
+    expect(b).toMatch(/\.sheet\{[^}]*left:auto;right:0/)
+    expect(b).toMatch(/\.mback\{[^}]*backdrop-filter:none/)
+  })
+
   it('base .list stays a flex column and base .chips stays scrollable (mobile guards)', () => {
     expect(rule('.list')).toContain('display:flex;flex-direction:column')
     expect(rule('.chips')).toContain('overflow-x:auto')

@@ -1001,6 +1001,12 @@ input[type="datetime-local"].field{display:block;min-height:48px}
   [data-testid="stats-overview-tab"]>.card:has(.hm-wrap){grid-column:1/-1}
   /* ~29 equipment chips clip behind overflow-x:auto here; desktop has room to wrap (issue #115) */
   #app .chips{flex-wrap:wrap}
+  /* issue #116: master-detail — History list left, activity detail pane right; sheets dock
+     to the right edge as a side panel instead of sliding up over the middle of the page */
+  .split{display:grid;grid-template-columns:1fr minmax(0,520px);gap:14px;align-items:start}
+  .split>*{min-width:0}
+  .sheet{left:auto;right:0;margin-left:0;width:520px;border-radius:0;height:100%;max-height:100%;animation:none}
+  .mback{background:rgba(0,0,0,.25);backdrop-filter:none;-webkit-backdrop-filter:none}
 }
 
 @media (max-width:400px){
