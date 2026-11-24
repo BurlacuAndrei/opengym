@@ -113,6 +113,31 @@ describe('Multi-Sport Home View (Issue #98)', () => {
     expect(html).toMatch(/<button[^>]*class="btn plain sm[^"]*"[^>]*><span>Adjust<\/span><\/button>/)
   })
 
+  it('renders clickable rows as native buttons with type="button" (issue #110)', () => {
+    const html = renderToStaticMarkup(React.createElement(Home))
+    expect(html).toContain('<button type="button" class="item" data-testid="starter-option-hybrid"')
+    expect(html).toContain('<button type="button" class="today-row" data-testid="home-rest-state"')
+    expect(html.match(/<button type="button" class="wday/g)).toHaveLength(7)
+
+    const today = todayISO()
+    const wd = new Date(today + 'T12:00:00').getDay()
+    useStore.setState({
+      S: {
+        ...JSON.parse(JSON.stringify(DEF)),
+        routines: [
+          { id: 'r-push', name: 'Upper Push', kind: 'gym', emoji: 'barbell', ex: [] },
+          { id: 'r-yoga', name: 'Evening Yoga', kind: 'yoga', emoji: 'stretch', ex: [] }
+        ],
+        cardioPlans: [
+          { id: 'cp-run', type: 'run', day: wd, targetDistanceM: 5000 }
+        ],
+        week: { [wd]: ['r-push', 'r-yoga', 'cp-run'] }
+      }
+    })
+    const seeded = renderToStaticMarkup(React.createElement(Home))
+    expect(seeded).toContain('<button type="button" class="today-row"')
+  })
+
   it('formats cardio avgPaceSecKm cleanly in metric and imperial without 300:00 bug', () => {
     const today = todayISO()
     const baseRun = { id: 'c-pace', type: 'run', cardioType: 'run', name: 'Tempo Run', d: today, durationMs: 1500000, distanceM: 5000, avgPaceSecKm: 300 }

@@ -31,7 +31,7 @@ function CoachCard({ nav }) {
   if (!hasConsent(S) || (!job && !pending)) return null
   const ready = !!pending
   return <div className="card" style={ready ? { borderColor: 'var(--acc)' } : null}>
-    <div className="today-row" onClick={() => nav(ready ? '/coach/proposal' : '/coach')}>
+    <button type="button" className="today-row" onClick={() => nav(ready ? '/coach/proposal' : '/coach')}>
       <div className="row" style={{ gap: 9, minWidth: 0 }}>
         <span className="lrow-i" style={{ '--tint': ready ? 'var(--acc)' : 'var(--orange)' }}><Icon name="sparkles" /></span>
         <div style={{ minWidth: 0 }}>
@@ -44,7 +44,7 @@ function CoachCard({ nav }) {
         </div>
       </div>
       {ready ? <span className="tag acc">{t('Review')}</span> : <Icon name="chevronRight" className="chev" />}
-    </div>
+    </button>
   </div>
 }
 
@@ -85,11 +85,11 @@ export default function Home() {
     const planned = !info.isRest && (info.routines.length > 0 || info.cardioPlans.length > 0)
     const dot = done ? ' done' : (info.isOverride && planned) ? ' ovr' : planned ? ' plan' : ''
     strip.push(
-      <div key={i} className={'wday' + (iso === todayStr ? ' today' : '')} onClick={() => dayOverrideSheet(iso)}>
+      <button key={i} type="button" className={'wday' + (iso === todayStr ? ' today' : '')} onClick={() => dayOverrideSheet(iso)}>
         <div className="lbl">{t(DAYS[d.getDay()])}</div>
         <div className="num">{d.getDate()}</div>
         <div className={'dot' + dot} />
-      </div>
+      </button>
     )
   }
   const sunday = new Date(monday)
@@ -136,7 +136,7 @@ export default function Home() {
       </div>
 
       {S.active && (
-        <div className="today-row" onClick={() => nav('/workout')}>
+        <button type="button" className="today-row" onClick={() => nav('/workout')}>
           <div className="row" style={{ gap: 9, minWidth: 0 }}>
             <span className="lrow-i" style={{ '--tint': 'var(--orange)' }}>
               <Icon name="timer" />
@@ -147,7 +147,7 @@ export default function Home() {
             </div>
           </div>
           <span className="tag" style={{ color: 'var(--orange)', background: 'color-mix(in srgb,var(--orange) 12%,transparent)' }}>{t('Resume')}</span>
-        </div>
+        </button>
       )}
 
       {hasTodayScheduled ? (
@@ -158,7 +158,7 @@ export default function Home() {
             const pMeta = PILLAR_STYLE[pKey]
             const doneToday = todayInfo.completed.some(c => c.routineId === r.id)
             return (
-              <div key={r.id} className="today-row" onClick={() => startFlow(r.id)}>
+              <button key={r.id} type="button" className="today-row" onClick={() => startFlow(r.id)}>
                 <div className="row" style={{ gap: 9, minWidth: 0 }}>
                   <span className="lrow-i" style={{ '--tint': pMeta.tint }}>
                     <Icon name={glyphOf(r.emoji)} />
@@ -171,7 +171,7 @@ export default function Home() {
                 <span className={doneToday ? 'tag' : 'tag acc'} style={doneToday ? { color: pMeta.tint, background: `color-mix(in srgb, ${pMeta.tint} 12%, transparent)` } : undefined}>
                   {doneToday ? t('Done') : t('Start')}
                 </span>
-              </div>
+              </button>
             )
           })}
 
@@ -179,8 +179,9 @@ export default function Home() {
             const pMeta = PILLAR_STYLE.cardio
             const doneToday = !!cp.completed || todayInfo.completed.some(c => c.entryType === 'cardio' && (c.cardioType === cp.type || c.type === cp.type))
             return (
-              <div
+              <button
                 key={cp.id}
+                type="button"
                 className="today-row"
                 onClick={() => nav('/record', { state: { activityType: cp.type || 'run', cardioPlanId: cp.id, cardioPlan: cp } })}
               >
@@ -196,12 +197,12 @@ export default function Home() {
                 <span className={doneToday ? 'tag' : 'tag acc'} style={doneToday ? { color: pMeta.tint, background: `color-mix(in srgb, ${pMeta.tint} 12%, transparent)` } : undefined}>
                   {doneToday ? t('Done') : t('Start')}
                 </span>
-              </div>
+              </button>
             )
           })}
         </div>
       ) : !S.active && (
-        <div className="today-row" data-testid="home-rest-state" onClick={() => dayOverrideSheet(todayStr)}>
+        <button type="button" className="today-row" data-testid="home-rest-state" onClick={() => dayOverrideSheet(todayStr)}>
           <div className="row" style={{ gap: 9, minWidth: 0 }}>
             <span className="lrow-i" style={{ '--tint': 'var(--pillar-cardio)' }}>
               <Icon name="moon" />
@@ -212,7 +213,7 @@ export default function Home() {
             </div>
           </div>
           <Icon name="plus" className="chev" />
-        </div>
+        </button>
       )}
     </div>
   )
@@ -246,8 +247,9 @@ export default function Home() {
           </>}
           <div className="list" style={{ margin: '0 -4px' }}>
             {STARTER_PLANS.map(tpl => (
-              <div
+              <button
                 key={tpl.id}
+                type="button"
                 className="item"
                 data-testid={`starter-option-${tpl.id}`}
                 onClick={() => handleChooseStarter(tpl)}
@@ -260,7 +262,7 @@ export default function Home() {
                   <div className="ss">{t(tpl.description)}</div>
                 </div>
                 <span className="tag acc">{t('Load')}</span>
-              </div>
+              </button>
             ))}
           </div>
           <div style={{ height: 10 }} />
