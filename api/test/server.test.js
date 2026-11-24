@@ -382,4 +382,47 @@ describe('server test harness & baseline API', () => {
       false
     );
   });
+
+  test('CORS allows Capacitor native WebView origins and rejects untrusted origins', async () => {
+    const srv = await spawnServer({
+      env: { ORIGIN: 'https://gym.example.com' },
+    });
+    try {
+      for (const allowedOrigin of ['https://localhost', 'capacitor://localhost', 'https://gym.example.com']) {
+        const pre = await srv.fetch('/api/data', {
+          method: 'OPTIONS',
+          headers: {
+            Origin: allowedOrigin,
+            'Access-Control-Request-Method': 'PUT',
+            'Access-Control-Request-Headers': 'Authorization, Content-Type',
+          },
+        });
+        assert.equal(pre.status, 204, `OPTIONS preflight should succeed for ${allowedOrigin}`);
+        assert.equal(pre.headers.get('access-control-allow-origin'), allowedOrigin);
+        assert.ok(pre.headers.get('access-control-allow-headers').includes('Authorization'));
+        assert.equal(pre.headers.get('access-control-allow-credentials'), null);
+
+        const getRes = await srv.fetch('/api/config', {
+          headers: { Origin: allowedOrigin },
+        });
+        assert.equal(getRes.status, 200);
+        assert.equal(getRes.headers.get('access-control-allow-origin'), allowedOrigin);
+      }
+
+      const evilPre = await srv.fetch('/api/config', {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://evil.example.com' },
+      });
+      assert.equal(evilPre.status, 403);
+      assert.equal(evilPre.headers.get('access-control-allow-origin'), null);
+
+      const evilGet = await srv.fetch('/api/config', {
+        headers: { Origin: 'https://evil.example.com' },
+      });
+      assert.equal(evilGet.status, 200);
+      assert.equal(evilGet.headers.get('access-control-allow-origin'), null);
+    } finally {
+      await srv.stop();
+    }
+  });
 });

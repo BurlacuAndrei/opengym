@@ -314,6 +314,7 @@ export function createSyncEngine(options = {}) {
     clearServerConfigFn?.()
     if (getState().setUser) getState().setUser(null)
     else setState?.({ user: null })
+    setState?.({ config: null })
     if (getState().setGuest) getState().setGuest(true)
     storage.removeItem('gym_dirty')
     storage.removeItem('gym_last_synced_ts')

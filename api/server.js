@@ -71,6 +71,18 @@ export function expectedOrigins() {
   return [ORIGIN, ...NATIVE_CONFIG.rawHex.map(certFingerprintToApkOrigin)];
 }
 
+const ALLOWED_CORS_ORIGINS = new Set(['https://localhost', 'capacitor://localhost', ORIGIN]);
+
+export function applyCors(req, res) {
+  const origin = req.headers?.origin;
+  if (!origin || !ALLOWED_CORS_ORIGINS.has(origin)) return false;
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept, X-Client-Mode, X-Opengym-Native');
+  res.setHeader('Vary', 'Origin');
+  return true;
+}
+
 fs.mkdirSync(DATA, { recursive: true });
 // 0700 is what stops the unprivileged user that Coach jobs run as from reading any of this —
 // state files, db.json, the session secret, the provider credential. The Agent SDK process gets
@@ -846,6 +858,13 @@ coachJobs.setProposalHook((uid, pending) => {
 startCadence({ users: () => db.users, userNow });
 
 const server = http.createServer(async (req, res) => {
+  const corsAllowed = applyCors(req, res);
+  if (req.method === 'OPTIONS') {
+    if (corsAllowed) res.setHeader('Access-Control-Max-Age', '86400');
+    res.writeHead(corsAllowed ? 204 : 403);
+    res.end();
+    return;
+  }
   const url = new URL(req.url, 'http://x');
   const cleanPath = url.pathname.length > 1 ? url.pathname.replace(/\/$/, '') : url.pathname;
   const key = req.method + ' ' + cleanPath;

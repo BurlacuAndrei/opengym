@@ -327,7 +327,7 @@ describe('RouteCanvas & Android Recording UI (Issue #62)', () => {
       const s1 = getGpsAccuracyStatus(4.2)
       expect(s1.level).toBe('good')
       expect(s1.label).toBe('GPS ±4m')
-      expect(s1.color).toBe('#10b981')
+      expect(s1.color).toBe('var(--green)')
 
       const s2 = getGpsAccuracyStatus(10)
       expect(s2.level).toBe('good')
@@ -338,14 +338,14 @@ describe('RouteCanvas & Android Recording UI (Issue #62)', () => {
       const status = getGpsAccuracyStatus(18)
       expect(status.level).toBe('fair')
       expect(status.label).toBe('GPS ±18m')
-      expect(status.color).toBe('#f59e0b')
+      expect(status.color).toBe('var(--orange)')
     })
 
     it('returns "poor" status when accuracy > 25m', () => {
       const status = getGpsAccuracyStatus(45.8)
       expect(status.level).toBe('poor')
       expect(status.label).toBe('GPS ±46m')
-      expect(status.color).toBe('#ef4444')
+      expect(status.color).toBe('var(--red)')
     })
   })
 

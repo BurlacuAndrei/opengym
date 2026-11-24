@@ -14,6 +14,7 @@ import { getServerUrl, clearServerConfig, verifyServer } from '../lib/server-con
 import { loadStarterPlan, confirmSheet, importFromApp } from '../sheets.jsx'
 import { coachAvailable, hasConsent } from '../lib/coach.js'
 import { forgetCoach } from '../lib/coach-api.js'
+import { RegisterSheet } from './Login.jsx'
 import Icon from '../components/Icon.jsx'
 import { Section, Row, SelectRow, Switch, Segmented, Button, TextField } from '../components/ui.jsx'
 
@@ -22,8 +23,9 @@ export default function Settings() {
   const S = useStore(s => s.S)
   const user = useStore(s => s.user)
   const config = useStore(s => s.config)
-  const { update, replaceState, setUser, pullState, pushState, signOut, signOutAll, resetDemo, reconcileOnConnect, disconnectServer } = useStore()
+  const { update, replaceState, setUser, pullState, pushState, signOut, signOutAll, resetDemo, reconcileOnConnect, refreshConfig } = useStore()
   const toast = useUI(s => s.toast)
+  const [, setServerRev] = useState(0)
   const fileRef = useRef(null)
   const importRef = useRef(null)
   const wakeOK = wakeLockSupported()
@@ -59,9 +61,12 @@ export default function Settings() {
       await (reconcileOnConnect ? reconcileOnConnect() : pullState())
       toast(t('Welcome back, {0}', u.name))
     }
-    catch (e) { if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast(e.message || t('Sign-in failed')) }
+    catch (e) {
+      const isCancel = e.name === 'NotAllowedError' || e.name === 'AbortError' || e.message === 'USER_CANCELLED' || e.code === 'USER_CANCELLED' || e?.message?.includes?.('USER_CANCELLED')
+      if (!isCancel) toast(e.message || t('Sign-in failed'))
+    }
   }
-  const registerHere = () => useUI.getState().openSheet(close => <RegisterInline close={close} setUser={setUser} pushState={pushState} pullState={pullState} toast={toast} />)
+  const registerHere = () => useUI.getState().openSheet(close => <RegisterSheet close={close} />)
   // Ends the profile's sessions on every device — this one included, so on success it lands in
   // the same place as the plain sign-out above (home, local data cleared). On failure nothing
   // local is touched: still signed in here, and say so rather than leaving a half-signed-out app.
@@ -108,7 +113,7 @@ export default function Settings() {
     {!user && !DEMO && !MOBILE && <p className="sect-f" style={{ marginTop: -18, marginBottom: 22 }}>{t('Guest mode — data lives only in this browser.')}</p>}
 
     {/* ---------- server (Android native build only) ---------- */}
-    {MOBILE && IS_ANDROID && <ServerSection toast={toast} />}
+    {MOBILE && IS_ANDROID && <ServerSection toast={toast} onServerChange={() => { setServerRev(n => n + 1); refreshConfig?.() }} />}
 
     {/* ---------- general ---------- */}
     <Section title={t('General')} footer={t('Note: switching units only changes the label — logged numbers are not converted.')}>
@@ -367,34 +372,7 @@ function PushCard({ S, update, toast }) {
   </>
 }
 
-function RegisterInline({ close, setUser, pushState, pullState, toast }) {
-  const nameRef = useRef(null)
-  const go = async () => {
-    const n = (nameRef.current.value || '').trim()
-    if (!n) { toast(t('Enter a name')); return }
-    try {
-      const u = await passkeyRegister(n); setUser(u); close()
-      const hadData = hasData(useStore.getState().S)
-      if (useStore.getState().reconcileOnConnect) {
-        await useStore.getState().reconcileOnConnect()
-      } else if (hadData) {
-        await pushState()
-      } else {
-        await pullState()
-      }
-      if (hadData) { toast(t('Profile created — data moved into it')) }
-      else { toast(t('Welcome, {0}', u.name)) }
-    } catch (e) { if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast(e.message || t('Registration failed')) }
-  }
-  return <>
-    <h3>{t('Create your profile')}</h3>
-    <div className="muted small" style={{ marginBottom: 14 }}>{t('Pick a name, then confirm with your device.')}</div>
-    <TextField ref={nameRef} placeholder={t('Your name')} maxLength={40} />
-    <div style={{ height: 12 }} /><Button variant="primary" onClick={go}>{t('Create passkey')}</Button>
-  </>
-}
-
-export function ServerSection({ toast }) {
+export function ServerSection({ toast, onServerChange }) {
   const [url, setUrl] = useState(() => getServerUrl())
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -411,6 +389,7 @@ export function ServerSection({ toast }) {
         } else {
           setUrl(res.config.url)
           setSavedUrl(res.config.url)
+          onServerChange?.()
           toast(t('Server connected'))
         }
       } else {
@@ -438,6 +417,7 @@ export function ServerSection({ toast }) {
             setUrl('')
             setSavedUrl('')
             setError('')
+            onServerChange?.()
             toast(t('Server removed — keeping local data only'))
           }}
         >
@@ -452,6 +432,7 @@ export function ServerSection({ toast }) {
             setUrl('')
             setSavedUrl('')
             setError('')
+            onServerChange?.()
             toast(t('Server removed — local data reset'))
           }}
         >

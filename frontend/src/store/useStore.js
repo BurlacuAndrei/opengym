@@ -540,6 +540,20 @@ export const useStore = create((set, get) => {
       persist(Object.assign(clone(DEF), buildDemoState()), false)
     },
 
+    async refreshConfig() {
+      if (DEMO || (MOBILE && !getServerUrl())) {
+        set({ config: null })
+        return null
+      }
+      try {
+        const config = await api('/api/config')
+        set({ config })
+        return config
+      } catch {
+        return null
+      }
+    },
+
     // Boot: ask the server who we are, then pull.
     async boot() {
       // Mobile build: no backend either — restore from the file mirror (the durable copy;
@@ -555,8 +569,13 @@ export const useStore = create((set, get) => {
         set({ nativeReady: true })
         const serverUrl = getServerUrl()
         const user = get().user
-        if (serverUrl && user) {
-          await get().pullState()
+        if (serverUrl) {
+          await get().refreshConfig()
+          if (user) {
+            await get().pullState()
+          } else {
+            get().setGuest(true)
+          }
         } else {
           get().setGuest(true)
         }

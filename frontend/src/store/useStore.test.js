@@ -1189,6 +1189,7 @@ describe('useStore', () => {
       storage.setItem('gym_guest', '0')
 
       const store = useStore.getState()
+      useStore.setState({ config: { coach: { enabled: true }, native: { rpId: 'gym.example.com' } } })
       store.setUser({ id: 'u-disconnect', name: 'Disconnect User' })
       expect(useStore.getState().user).toBeTruthy()
       expect(await getToken()).toBe('secret-session-token')
@@ -1200,11 +1201,32 @@ describe('useStore', () => {
       expect(await getToken()).toBeNull()
       // Server config cleared
       expect(getServerUrl()).toBe('')
-      // User is null
+      // User and capabilities cleared
       expect(useStore.getState().user).toBeNull()
+      expect(useStore.getState().config).toBeNull()
       // Returned to local-only guest mode
       expect(useStore.getState().isGuest()).toBe(true)
       expect(storage.getItem('gym_guest')).toBe('1')
+    })
+
+    it('refreshConfig fetches /api/config in mobile server mode and clears when no server is configured', async () => {
+      mockMobile = true
+      const { saveServerConfig, clearServerConfig } = await import('../lib/server-config.js')
+      clearServerConfig()
+
+      const transport = vi.fn().mockResolvedValue({ coach: { enabled: true, provider: 'claude' }, native: { rpId: 'gym.example.com' } })
+      setTransport(transport)
+
+      const store = useStore.getState()
+      expect(await store.refreshConfig()).toBeNull()
+      expect(transport).not.toHaveBeenCalled()
+
+      saveServerConfig({ url: 'https://gym.example.com', rpId: 'gym.example.com' })
+      const cfg = await store.refreshConfig()
+      expect(transport).toHaveBeenCalledWith('/api/config', undefined)
+      expect(cfg).toEqual({ coach: { enabled: true, provider: 'claude' }, native: { rpId: 'gym.example.com' } })
+      expect(useStore.getState().config).toEqual(cfg)
+      clearServerConfig()
     })
 
     it('disconnectServer keeps local data and native file mirror intact', async () => {
