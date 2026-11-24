@@ -102,8 +102,8 @@ export function getGpsAccuracyStatus(accuracy) {
     return {
       level: 'searching',
       label: t('Acquiring GPS…'),
-      color: 'var(--muted, #94a3b8)',
-      bg: 'var(--surface-2, rgba(148, 163, 184, 0.15))',
+      color: 'var(--label-2)',
+      bg: 'var(--surface-2)',
     }
   }
 
@@ -112,8 +112,8 @@ export function getGpsAccuracyStatus(accuracy) {
     return {
       level: 'good',
       label: `GPS ±${Math.round(acc)}m`,
-      color: '#10b981',
-      bg: 'rgba(16, 185, 129, 0.15)',
+      color: 'var(--green)',
+      bg: 'color-mix(in srgb, var(--green) 15%, transparent)',
     }
   }
 
@@ -121,16 +121,16 @@ export function getGpsAccuracyStatus(accuracy) {
     return {
       level: 'fair',
       label: `GPS ±${Math.round(acc)}m`,
-      color: '#f59e0b',
-      bg: 'rgba(245, 158, 11, 0.15)',
+      color: 'var(--orange)',
+      bg: 'color-mix(in srgb, var(--orange) 15%, transparent)',
     }
   }
 
   return {
     level: 'poor',
     label: `GPS ±${Math.round(acc)}m`,
-    color: '#ef4444',
-    bg: 'rgba(239, 68, 68, 0.15)',
+    color: 'var(--red)',
+    bg: 'color-mix(in srgb, var(--red) 15%, transparent)',
   }
 }
 
@@ -843,7 +843,7 @@ export default function RecordingView({
           </div>
         </div>
 
-        {/* Route canvas */}
+        {/* Route canvas — color props stay literal: canvas 2D ctx cannot resolve var() */}
         <div
           className="card"
           style={{
@@ -851,14 +851,14 @@ export default function RecordingView({
             flexDirection: 'column',
             alignItems: 'center',
             padding: 12,
-            background: 'var(--surface-1)',
+            background: 'var(--surface)',
           }}
         >
           <RouteCanvas
             points={finalizedActivity.points || points}
             width={340}
             height={200}
-            strokeColor="var(--acc, #3b82f6)"
+            strokeColor="#3b82f6" /* literal: canvas ctx.strokeStyle cannot resolve var() */
             startColor="#22c55e"
             endColor="#ef4444"
           />
@@ -1188,8 +1188,8 @@ export default function RecordingView({
           <span
             className="lrow-i"
             style={{
-              background: isPaused ? 'var(--yellow, #f59e0b)' : 'var(--acc, #3b82f6)',
-              color: '#fff',
+              background: isPaused ? 'var(--yellow)' : 'var(--acc)',
+              color: '#fff', // literal: chip text stays white over the blue/yellow chip in both themes
               width: 36,
               height: 36,
               borderRadius: 9,
@@ -1207,7 +1207,7 @@ export default function RecordingView({
               style={{
                 fontSize: 11,
                 fontWeight: 700,
-                color: isPaused ? 'var(--yellow, #f59e0b)' : 'var(--acc, #3b82f6)',
+                color: isPaused ? 'var(--yellow)' : 'var(--acc)',
                 letterSpacing: '0.04em',
               }}
             >
@@ -1265,11 +1265,11 @@ export default function RecordingView({
             justifyContent: 'space-between',
             padding: '10px 14px',
             marginBottom: 12,
-            background: 'var(--surface-1)',
+            background: 'var(--surface)',
             borderLeft: `4px solid ${
               runnerRef.current.status === 'cooldown'
-                ? 'var(--yellow, #f59e0b)'
-                : 'var(--acc, #3b82f6)'
+                ? 'var(--yellow)'
+                : 'var(--acc)'
             }`,
           }}
         >
@@ -1282,8 +1282,8 @@ export default function RecordingView({
                 letterSpacing: '0.04em',
                 color:
                   runnerRef.current.status === 'cooldown'
-                    ? 'var(--yellow, #f59e0b)'
-                    : 'var(--acc, #3b82f6)',
+                    ? 'var(--yellow)'
+                    : 'var(--acc)',
               }}
               data-testid="interval-runner-status"
             >
@@ -1300,7 +1300,7 @@ export default function RecordingView({
           </div>
           {runnerRef.current.currentStep && (
             <div
-              style={{ fontSize: 13, color: 'var(--muted, #94a3b8)', fontWeight: 600 }}
+              style={{ fontSize: 13, color: 'var(--label-2)', fontWeight: 600 }}
               data-testid="interval-step-cue"
             >
               {runnerRef.current.getStepCue()}
@@ -1316,7 +1316,7 @@ export default function RecordingView({
           textAlign: 'center',
           padding: '20px 16px',
           marginBottom: 12,
-          background: 'var(--surface-1)',
+          background: 'var(--surface)',
         }}
       >
         <div
@@ -1435,7 +1435,7 @@ export default function RecordingView({
         </div>
       )}
 
-      {/* Live Route Map Trail */}
+      {/* Live Route Map Trail — color props stay literal: canvas 2D ctx cannot resolve var() */}
       <div
         className="card"
         style={{
@@ -1444,7 +1444,7 @@ export default function RecordingView({
           flexDirection: 'column',
           alignItems: 'center',
           marginBottom: 16,
-          background: 'var(--surface-1)',
+          background: 'var(--surface)',
         }}
       >
         <RouteCanvas
@@ -1454,7 +1454,7 @@ export default function RecordingView({
           isOffCourse={!!routeStatus?.isOffCourse}
           width={340}
           height={170}
-          strokeColor="var(--acc, #3b82f6)"
+          strokeColor="#3b82f6" /* literal: canvas ctx.strokeStyle cannot resolve var() */
           startColor="#22c55e"
           endColor="#ef4444"
         />
@@ -1484,7 +1484,7 @@ export default function RecordingView({
                 height: 52,
                 fontSize: 16,
                 fontWeight: 700,
-                background: 'var(--acc, #3b82f6)',
+                background: 'var(--acc)',
               }}
               onClick={handleResume}
             >
@@ -1500,8 +1500,8 @@ export default function RecordingView({
                 height: 52,
                 fontSize: 16,
                 fontWeight: 700,
-                borderColor: 'var(--yellow, #f59e0b)',
-                color: 'var(--yellow, #f59e0b)',
+                borderColor: 'var(--yellow)',
+                color: 'var(--yellow)',
               }}
               onClick={handlePause}
             >
@@ -1517,7 +1517,7 @@ export default function RecordingView({
               flex: 1,
               height: 52,
               fontSize: 14,
-              color: 'var(--red, #ef4444)',
+              color: 'var(--red)',
             }}
             onClick={handleDiscard}
           >
@@ -1541,8 +1541,8 @@ export default function RecordingView({
               fontSize: 16,
               fontWeight: 700,
               background: 'var(--surface-2)',
-              color: 'var(--red, #ef4444)',
-              border: '2px solid var(--red, #ef4444)',
+              color: 'var(--red)',
+              border: '2px solid var(--red)',
               borderRadius: 12,
               overflow: 'hidden',
               cursor: isFinishing ? 'wait' : 'pointer',
@@ -1571,7 +1571,7 @@ export default function RecordingView({
                 top: 0,
                 bottom: 0,
                 width: `${holdProgress}%`,
-                background: 'var(--red, #ef4444)',
+                background: 'var(--red)',
                 opacity: 0.35,
                 pointerEvents: 'none',
                 transition: holdProgress === 0 ? 'width 0.15s ease' : 'none',

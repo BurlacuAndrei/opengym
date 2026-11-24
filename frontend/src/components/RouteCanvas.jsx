@@ -162,6 +162,7 @@ export function drawRouteOnCanvas(canvas, points, options = {}) {
   const ctx = canvas.getContext('2d')
   if (!ctx) return false
 
+  // Color defaults stay literal hex: canvas 2D ctx cannot resolve var().
   const {
     width = canvas.width || 300,
     height = canvas.height || 200,

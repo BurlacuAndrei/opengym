@@ -162,17 +162,17 @@ export default function GearManager({ close, gear: propGear, unit: propUnit, inl
         <form
           onSubmit={handleAddSubmit}
           style={{
-            background: 'var(--surface-2, #1e1e1e)',
+            background: 'var(--surface-2)',
             borderRadius: 10,
             padding: 16,
             marginBottom: 20,
-            border: '1px solid var(--border, #333)'
+            border: '1px solid var(--sep)'
           }}
         >
           <div style={{ fontWeight: 600, marginBottom: 12 }}>{t('Add New Gear')}</div>
 
           {formError && (
-            <div style={{ color: 'var(--red, #e05252)', fontSize: 13, marginBottom: 10 }}>
+            <div style={{ color: 'var(--red)', fontSize: 13, marginBottom: 10 }}>
               {formError}
             </div>
           )}
@@ -263,8 +263,8 @@ export default function GearManager({ close, gear: propGear, unit: propUnit, inl
           style={{
             padding: '36px 16px',
             textAlign: 'center',
-            color: 'var(--muted, #888)',
-            background: 'var(--surface-1, #161616)',
+            color: 'var(--label-2)',
+            background: 'var(--surface)',
             borderRadius: 10
           }}
         >
@@ -284,12 +284,12 @@ export default function GearManager({ close, gear: propGear, unit: propUnit, inl
                 key={item.id}
                 className="gear-card"
                 style={{
-                  background: 'var(--surface-2, #1e1e1e)',
+                  background: 'var(--surface-2)',
                   borderRadius: 10,
                   padding: 14,
                   border: dueRetirement
-                    ? '1px solid var(--red, #e05252)'
-                    : '1px solid var(--border, #2a2a2a)',
+                    ? '1px solid var(--red)'
+                    : '1px solid var(--sep)',
                   boxShadow: '0 2px 6px rgba(0,0,0,0.2)'
                 }}
               >
@@ -304,8 +304,8 @@ export default function GearManager({ close, gear: propGear, unit: propUnit, inl
                         width: 34,
                         height: 34,
                         borderRadius: 8,
-                        background: 'var(--surface-3, #2c2c2c)',
-                        color: 'var(--acc, #c8ff00)'
+                        background: 'var(--surface-3)',
+                        color: 'var(--acc)'
                       }}
                     >
                       <Icon name={iconName} />
@@ -360,14 +360,14 @@ export default function GearManager({ close, gear: propGear, unit: propUnit, inl
                       display: 'flex',
                       justifyContent: 'space-between',
                       fontSize: 12,
-                      color: 'var(--muted, #888)',
+                      color: 'var(--label-2)',
                       marginBottom: 4
                     }}
                   >
                     <span>
                       {formatDistance(item.distanceM, unit)} / {formatDistance(item.maxDistanceM, unit)}
                     </span>
-                    <span style={{ fontWeight: 600, color: dueRetirement ? 'var(--red, #e05252)' : 'inherit' }}>
+                    <span style={{ fontWeight: 600, color: dueRetirement ? 'var(--red)' : 'inherit' }}>
                       {wearPct}% {t('wear')}
                     </span>
                   </div>
@@ -379,7 +379,7 @@ export default function GearManager({ close, gear: propGear, unit: propUnit, inl
                       width: '100%',
                       height: 6,
                       borderRadius: 3,
-                      background: 'var(--surface-3, #333)',
+                      background: 'var(--surface-3)',
                       overflow: 'hidden'
                     }}
                   >
@@ -389,10 +389,10 @@ export default function GearManager({ close, gear: propGear, unit: propUnit, inl
                         width: `${Math.min(100, wearPct)}%`,
                         height: '100%',
                         background: dueRetirement
-                          ? 'var(--red, #e05252)'
+                          ? 'var(--red)'
                           : wearPct >= 80
-                          ? 'var(--yellow, #e5a93c)'
-                          : 'var(--acc, #c8ff00)',
+                          ? 'var(--yellow)'
+                          : 'var(--acc)',
                         borderRadius: 3,
                         transition: 'width 0.3s ease'
                       }}
@@ -409,7 +409,7 @@ export default function GearManager({ close, gear: propGear, unit: propUnit, inl
                       padding: '6px 10px',
                       borderRadius: 6,
                       background: 'rgba(224, 82, 82, 0.15)',
-                      color: 'var(--red, #e05252)',
+                      color: 'var(--red)',
                       fontSize: 12,
                       fontWeight: 600,
                       display: 'flex',

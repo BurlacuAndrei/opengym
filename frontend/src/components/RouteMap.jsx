@@ -149,6 +149,7 @@ export function projectPointsToScreen(points, centerLat, centerLon, zoom, width,
  * Returns an unmount/cleanup function.
  */
 export function initLeafletMap(container, options = {}) {
+  // Color defaults stay literal hex: Leaflet writes SVG presentation attributes, which cannot resolve var().
   const {
     leaflet,
     points = [],
@@ -240,6 +241,7 @@ export default function RouteMap({
   width = 300,
   height = 200,
   padding = 16,
+  // Color defaults stay literal hex: they end up in canvas ctx and SVG presentation attributes, which cannot resolve var().
   strokeColor = '#10b981',
   lineWidth = 3,
   startColor = '#22c55e',
@@ -354,7 +356,7 @@ export default function RouteMap({
           style={{
             marginTop: 6,
             fontSize: 12,
-            color: 'var(--dim, #888)',
+            color: 'var(--label-3)',
             textAlign: 'center',
           }}
         >
@@ -443,7 +445,7 @@ export default function RouteMap({
         borderRadius: 8,
         overflow: 'hidden',
         display: 'inline-block',
-        backgroundColor: '#e5e7eb',
+        backgroundColor: 'var(--surface-3)',
         ...style,
       }}
       data-testid={dataTestId}
@@ -529,8 +531,8 @@ export default function RouteMap({
               cx={hoverPointScreen.x}
               cy={hoverPointScreen.y}
               r={(dotRadius || 5) + 2}
-              fill="#3b82f6"
-              stroke="#ffffff"
+              fill="#3b82f6" /* literal: SVG presentation attributes cannot resolve var() */
+              stroke="#ffffff" /* literal halo: same var() limit */
               strokeWidth={2}
             />
           )}
@@ -547,7 +549,7 @@ export default function RouteMap({
           fontSize: 10,
           lineHeight: '12px',
           background: 'rgba(255, 255, 255, 0.75)',
-          color: '#333',
+          color: 'var(--label-2)',
           padding: '1px 4px',
           borderRadius: 2,
           pointerEvents: 'auto',

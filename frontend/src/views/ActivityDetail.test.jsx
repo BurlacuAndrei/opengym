@@ -686,7 +686,7 @@ describe('ActivityDetail View (Issue #83)', () => {
         React.createElement(ActivityDetail, { activity: sampleActivity })
       )
 
-      expect(html).toContain('padding-bottom:calc(32px + var(--sab, 0px))')
+      expect(html).toContain('padding-bottom:calc(32px + var(--sab))')
       expect(html).not.toContain('padding:16px;max-width:720px')
     })
   })

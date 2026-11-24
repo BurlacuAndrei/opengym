@@ -126,7 +126,7 @@ export default function GpxImportDialog({
   if (error) {
     return (
       <div style={{ textAlign: 'center', padding: '16px 8px', minWidth: 280 }}>
-        <h3 style={{ marginBottom: 8, color: 'var(--red, #ef4444)' }}>{t('GPX Import Error')}</h3>
+        <h3 style={{ marginBottom: 8, color: 'var(--red)' }}>{t('GPX Import Error')}</h3>
         <div className="muted small" style={{ marginBottom: 18, lineHeight: 1.5 }}>
           {error}
         </div>
@@ -156,7 +156,7 @@ export default function GpxImportDialog({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: 'var(--accent, #30d158)'
+            color: 'var(--acc)'
           }}
         >
           <Icon name="chartLine" size={20} />

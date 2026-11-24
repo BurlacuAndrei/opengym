@@ -19,11 +19,11 @@ import { isImperial, distanceUnit, speedUnit, paceUnit } from '../lib/cardio-for
  * Step type labels and accent themes.
  */
 const STEP_META = {
-  warmup: { label: 'Warmup', icon: 'flame', color: 'var(--orange, #ff9f0a)' },
-  work: { label: 'Work', icon: 'bolt', color: 'var(--red, #ff453a)' },
-  recover: { label: 'Recover', icon: 'heart', color: 'var(--green, #30d158)' },
-  cooldown: { label: 'Cooldown', icon: 'clock', color: 'var(--blue, #0a84ff)' },
-  repeat: { label: 'Repeat Block', icon: 'timer', color: 'var(--accent, #bf5af2)' }
+  warmup: { label: 'Warmup', icon: 'flame', color: 'var(--orange)' },
+  work: { label: 'Work', icon: 'bolt', color: 'var(--red)' },
+  recover: { label: 'Recover', icon: 'heart', color: 'var(--green)' },
+  cooldown: { label: 'Cooldown', icon: 'clock', color: 'var(--blue)' },
+  repeat: { label: 'Repeat Block', icon: 'timer', color: 'var(--purple)' }
 }
 
 /**
@@ -188,8 +188,8 @@ function SingleStepFields({
                     fontSize: 12,
                     fontWeight: active ? 700 : 500,
                     cursor: readOnly ? 'default' : 'pointer',
-                    background: active ? 'var(--blue, #0a84ff)' : 'var(--surface-3, #3a3a3c)',
-                    color: active ? '#fff' : 'var(--label-2)'
+                    background: active ? 'var(--blue)' : 'var(--surface-3)',
+                    color: active ? '#fff' : 'var(--label-2)' // literal #fff: chip text stays white over the blue chip in both themes
                   }}
                 >
                   Z{z}
@@ -324,9 +324,9 @@ export default function IntervalEditor({
           flexWrap: 'wrap',
           gap: 8,
           padding: '10px 14px',
-          background: 'var(--surface, #1c1c1e)',
+          background: 'var(--surface)',
           borderRadius: 12,
-          border: '1px solid var(--sep, rgba(84,84,88,.34))'
+          border: '1px solid var(--sep)'
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
@@ -359,7 +359,7 @@ export default function IntervalEditor({
             data-testid="interval-validation-warning"
             style={{
               fontSize: 12,
-              color: 'var(--orange, #ff9f0a)',
+              color: 'var(--orange)',
               display: 'flex',
               alignItems: 'center',
               gap: 4
@@ -384,9 +384,9 @@ export default function IntervalEditor({
               padding: '24px 16px',
               textAlign: 'center',
               color: 'var(--label-3)',
-              background: 'var(--surface, #1c1c1e)',
+              background: 'var(--surface)',
               borderRadius: 12,
-              border: '1px dashed var(--sep, rgba(84,84,88,.4))'
+              border: '1px dashed var(--sep)'
             }}
           >
             No interval steps configured yet. Use the buttons below to build your structured workout.
@@ -402,10 +402,10 @@ export default function IntervalEditor({
                 data-testid={`interval-step-${idx}`}
                 className="interval-step-card"
                 style={{
-                  background: 'var(--surface, #1c1c1e)',
+                  background: 'var(--surface)',
                   borderRadius: 12,
                   padding: 14,
-                  border: `1px solid ${isRepeat ? 'var(--accent, #bf5af2)' : 'var(--sep, rgba(84,84,88,.34))'}`,
+                  border: `1px solid ${isRepeat ? 'var(--purple)' : 'var(--sep)'}`,
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 12
@@ -419,7 +419,7 @@ export default function IntervalEditor({
                         width: 22,
                         height: 22,
                         borderRadius: 11,
-                        background: 'var(--surface-3, #3a3a3c)',
+                        background: 'var(--surface-3)',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -485,7 +485,7 @@ export default function IntervalEditor({
                         onClick={() => handleRemoveStep(idx)}
                         aria-label="Remove step"
                         className="btn plain"
-                        style={{ padding: 4, color: 'var(--red, #ff453a)' }}
+                        style={{ padding: 4, color: 'var(--red)' }}
                       >
                         <Icon name="trash" size={16} />
                       </button>
@@ -503,7 +503,7 @@ export default function IntervalEditor({
                       flexDirection: 'column',
                       gap: 12,
                       paddingLeft: 8,
-                      borderLeft: '2px solid var(--accent, #bf5af2)'
+                      borderLeft: '2px solid var(--purple)'
                     }}
                   >
                     {/* Repeat Count Header */}
@@ -529,7 +529,7 @@ export default function IntervalEditor({
                     <div
                       data-testid={`repeat-work-step-${idx}`}
                       style={{
-                        background: 'var(--surface-2, #2c2c2e)',
+                        background: 'var(--surface-2)',
                         borderRadius: 8,
                         padding: 10
                       }}
@@ -547,7 +547,7 @@ export default function IntervalEditor({
                     <div
                       data-testid={`repeat-recover-step-${idx}`}
                       style={{
-                        background: 'var(--surface-2, #2c2c2e)',
+                        background: 'var(--surface-2)',
                         borderRadius: 8,
                         padding: 10
                       }}

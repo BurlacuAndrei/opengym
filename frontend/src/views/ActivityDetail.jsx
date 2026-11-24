@@ -568,7 +568,7 @@ export default function ActivityDetail({
     <div
       className="activity-detail-view"
       data-testid="activity-detail-view"
-      style={{ maxWidth: 720, margin: '0 auto', paddingBottom: 'calc(32px + var(--sab, 0px))' }}
+      style={{ maxWidth: 720, margin: '0 auto', paddingBottom: 'calc(32px + var(--sab))' }}
     >
       {/* Navigation header */}
       <div
@@ -621,7 +621,7 @@ export default function ActivityDetail({
             {activity.name || t(activity.cardioType || activity.type || 'Cardio')}
           </h1>
           {dateLabel && (
-            <span style={{ color: 'var(--label-2, #888)', fontSize: 14 }} data-testid="activity-date">
+            <span style={{ color: 'var(--label-2)', fontSize: 14 }} data-testid="activity-date">
               {dateLabel}
             </span>
           )}
@@ -693,23 +693,23 @@ export default function ActivityDetail({
           marginBottom: 20,
         }}
       >
-        <div className="card" style={{ padding: '12px 14px', borderRadius: 10, background: 'var(--card-bg, rgba(255,255,255,0.05))' }}>
-          <div style={{ fontSize: 12, color: 'var(--label-2, #888)' }}>{t('Distance')}</div>
+        <div className="card" style={{ padding: '12px 14px', borderRadius: 10, background: 'var(--surface)' }}>
+          <div style={{ fontSize: 12, color: 'var(--label-2)' }}>{t('Distance')}</div>
           <div style={{ fontSize: 20, fontWeight: 700, marginTop: 4 }} data-testid="kpi-distance">
             {activity.distanceM > 0 ? fmtDist(activity.distanceM, S.unit) : '—'}
           </div>
         </div>
 
-        <div className="card" style={{ padding: '12px 14px', borderRadius: 10, background: 'var(--card-bg, rgba(255,255,255,0.05))' }}>
-          <div style={{ fontSize: 12, color: 'var(--label-2, #888)' }}>{t('Duration')}</div>
+        <div className="card" style={{ padding: '12px 14px', borderRadius: 10, background: 'var(--surface)' }}>
+          <div style={{ fontSize: 12, color: 'var(--label-2)' }}>{t('Duration')}</div>
           <div style={{ fontSize: 20, fontWeight: 700, marginTop: 4 }} data-testid="kpi-duration">
             {fmtDur(activity.durationMs || 0)}
           </div>
         </div>
 
         {rateDisplay && (
-          <div className="card" style={{ padding: '12px 14px', borderRadius: 10, background: 'var(--card-bg, rgba(255,255,255,0.05))' }}>
-            <div style={{ fontSize: 12, color: 'var(--label-2, #888)' }}>{metric === 'speed' ? t('Avg Speed') : t('Avg Pace')}</div>
+          <div className="card" style={{ padding: '12px 14px', borderRadius: 10, background: 'var(--surface)' }}>
+            <div style={{ fontSize: 12, color: 'var(--label-2)' }}>{metric === 'speed' ? t('Avg Speed') : t('Avg Pace')}</div>
             <div style={{ fontSize: 20, fontWeight: 700, marginTop: 4 }} data-testid="kpi-rate">
               {rateDisplay}
             </div>
@@ -717,8 +717,8 @@ export default function ActivityDetail({
         )}
 
         {activity.elevationGainM != null && (
-          <div className="card" style={{ padding: '12px 14px', borderRadius: 10, background: 'var(--card-bg, rgba(255,255,255,0.05))' }}>
-            <div style={{ fontSize: 12, color: 'var(--label-2, #888)' }}>{t('Elevation Gain')}</div>
+          <div className="card" style={{ padding: '12px 14px', borderRadius: 10, background: 'var(--surface)' }}>
+            <div style={{ fontSize: 12, color: 'var(--label-2)' }}>{t('Elevation Gain')}</div>
             <div style={{ fontSize: 20, fontWeight: 700, marginTop: 4 }} data-testid="kpi-elevation">
               +{formatElevation(activity.elevationGainM, S.unit)}
             </div>
@@ -728,7 +728,7 @@ export default function ActivityDetail({
 
       {activityNotes && (
         <div className="card" data-testid="activity-notes" style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 12, color: 'var(--label-2, #888)', marginBottom: 4 }}>{t('Notes')}</div>
+          <div style={{ fontSize: 12, color: 'var(--label-2)', marginBottom: 4 }}>{t('Notes')}</div>
           <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{activityNotes}</div>
         </div>
       )}
@@ -741,13 +741,13 @@ export default function ActivityDetail({
           style={{
             padding: 16,
             borderRadius: 10,
-            border: '1px solid var(--acc, #10b981)',
+            border: '1px solid var(--acc)',
             marginBottom: 20,
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <h3 style={{ margin: 0, fontSize: 16 }}>{t('Trim Track Points')}</h3>
-            <span style={{ fontSize: 12, color: 'var(--label-2, #888)' }} data-testid="trim-points-count">
+            <span style={{ fontSize: 12, color: 'var(--label-2)' }} data-testid="trim-points-count">
               {Math.max(0, trimEnd - trimStart + 1)} / {trackPoints.length} {t('points')}
             </span>
           </div>
@@ -831,7 +831,7 @@ export default function ActivityDetail({
             />
           </div>
         ) : (
-          <div className="card empty" style={{ padding: 24, textAlign: 'center', color: 'var(--label-3, #666)' }}>
+          <div className="card empty" style={{ padding: 24, textAlign: 'center', color: 'var(--label-3)' }}>
             {loading ? t('Loading route track…') : error || t('No GPS track data available for this activity.')}
           </div>
         )}
@@ -841,15 +841,15 @@ export default function ActivityDetail({
       {chartData.length >= 2 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20, marginBottom: 24 }}>
           {/* Elevation Profile Chart */}
-          <div className="card" style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--card-bg, rgba(255,255,255,0.05))' }}>
+          <div className="card" style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--surface)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
               <span style={{ fontSize: 14, fontWeight: 600 }}>{t('Elevation Profile')}</span>
               {activeHover ? (
-                <span style={{ fontSize: 12, color: 'var(--blue, #3b82f6)' }} data-testid="elevation-hover-tooltip">
+                <span style={{ fontSize: 12, color: 'var(--blue)' }} data-testid="elevation-hover-tooltip">
                   {formatElevation(activeHover.ele, S.unit)} · {formatDistance(activeHover.cumDist, S.unit)}
                 </span>
               ) : (
-                <span style={{ fontSize: 12, color: 'var(--label-2, #888)' }}>
+                <span style={{ fontSize: 12, color: 'var(--label-2)' }}>
                   +{formatElevation(maxEle - minEle, S.unit)} {t('range')}
                 </span>
               )}
@@ -866,27 +866,27 @@ export default function ActivityDetail({
             >
               <defs>
                 <linearGradient id="eleGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--blue, #3b82f6)" stopOpacity="0.35" />
-                  <stop offset="100%" stopColor="var(--blue, #3b82f6)" stopOpacity="0.02" />
+                  <stop offset="0%" stopColor="var(--blue)" stopOpacity="0.35" />
+                  <stop offset="100%" stopColor="var(--blue)" stopOpacity="0.02" />
                 </linearGradient>
               </defs>
 
               {/* Gridlines & Y-axis labels */}
-              <line x1={P.l} y1={P.t} x2={CHART_W - P.r} y2={P.t} stroke="var(--sep-op, rgba(255,255,255,0.08))" strokeDasharray="2 4" />
-              <text x={P.l - 6} y={P.t + 4} textAnchor="end" fontSize="9.5" fill="var(--label-2, #888)">
+              <line x1={P.l} y1={P.t} x2={CHART_W - P.r} y2={P.t} stroke="var(--sep-op)" strokeDasharray="2 4" />
+              <text x={P.l - 6} y={P.t + 4} textAnchor="end" fontSize="9.5" fill="var(--label-2)">
                 {Math.round(maxEle)}
               </text>
 
-              <line x1={P.l} y1={CHART_H - P.b} x2={CHART_W - P.r} y2={CHART_H - P.b} stroke="var(--sep-op, rgba(255,255,255,0.08))" />
-              <text x={P.l - 6} y={CHART_H - P.b + 3} textAnchor="end" fontSize="9.5" fill="var(--label-2, #888)">
+              <line x1={P.l} y1={CHART_H - P.b} x2={CHART_W - P.r} y2={CHART_H - P.b} stroke="var(--sep-op)" />
+              <text x={P.l - 6} y={CHART_H - P.b + 3} textAnchor="end" fontSize="9.5" fill="var(--label-2)">
                 {Math.round(minEle)} {elevationUnit(S.unit)}
               </text>
 
               {/* Distance X-axis labels */}
-              <text x={P.l} y={CHART_H - 8} textAnchor="start" fontSize="9.5" fill="var(--label-2, #888)">
+              <text x={P.l} y={CHART_H - 8} textAnchor="start" fontSize="9.5" fill="var(--label-2)">
                 0
               </text>
-              <text x={CHART_W - P.r} y={CHART_H - 8} textAnchor="end" fontSize="9.5" fill="var(--label-2, #888)">
+              <text x={CHART_W - P.r} y={CHART_H - 8} textAnchor="end" fontSize="9.5" fill="var(--label-2)">
                 {formatDistance(totalDist, S.unit)}
               </text>
 
@@ -905,7 +905,7 @@ export default function ActivityDetail({
                 <path
                   d={chartData.map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(d.cumDist)} ${getEleY(d.ele)}`).join(' ')}
                   fill="none"
-                  stroke="var(--blue, #3b82f6)"
+                  stroke="var(--blue)"
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -920,7 +920,7 @@ export default function ActivityDetail({
                     y1={P.t}
                     x2={hoverX}
                     y2={CHART_H - P.b}
-                    stroke="var(--blue, #3b82f6)"
+                    stroke="var(--blue)"
                     strokeWidth="1.5"
                     strokeDasharray="3 3"
                   />
@@ -928,8 +928,8 @@ export default function ActivityDetail({
                     cx={hoverX}
                     cy={hoverEleY}
                     r="4.5"
-                    fill="var(--blue, #3b82f6)"
-                    stroke="#ffffff"
+                    fill="var(--blue)"
+                    stroke="#ffffff" /* literal: SVG presentation attributes cannot resolve var() */
                     strokeWidth="2"
                   />
                 </g>
@@ -938,15 +938,15 @@ export default function ActivityDetail({
           </div>
 
           {/* Interactive Pace Chart */}
-          <div className="card" style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--card-bg, rgba(255,255,255,0.05))' }}>
+          <div className="card" style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--surface)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
               <span style={{ fontSize: 14, fontWeight: 600 }}>{t('Pace Chart')}</span>
               {activeHover ? (
-                <span style={{ fontSize: 12, color: 'var(--accent, #10b981)' }} data-testid="pace-hover-tooltip">
+                <span style={{ fontSize: 12, color: 'var(--acc)' }} data-testid="pace-hover-tooltip">
                   {fmtPace(activeHover.pace, S.unit)} · {formatDistance(activeHover.cumDist, S.unit)}
                 </span>
               ) : (
-                <span style={{ fontSize: 12, color: 'var(--label-2, #888)' }}>
+                <span style={{ fontSize: 12, color: 'var(--label-2)' }}>
                   {paceUnit(S.unit)}
                 </span>
               )}
@@ -962,21 +962,21 @@ export default function ActivityDetail({
               data-testid="pace-chart"
             >
               {/* Pace Gridlines & Labels */}
-              <line x1={P.l} y1={P.t} x2={CHART_W - P.r} y2={P.t} stroke="var(--sep-op, rgba(255,255,255,0.08))" strokeDasharray="2 4" />
-              <text x={P.l - 6} y={P.t + 4} textAnchor="end" fontSize="9.5" fill="var(--label-2, #888)">
+              <line x1={P.l} y1={P.t} x2={CHART_W - P.r} y2={P.t} stroke="var(--sep-op)" strokeDasharray="2 4" />
+              <text x={P.l - 6} y={P.t + 4} textAnchor="end" fontSize="9.5" fill="var(--label-2)">
                 {fmtPace(minPace, S.unit, { short: true })}
               </text>
 
-              <line x1={P.l} y1={CHART_H - P.b} x2={CHART_W - P.r} y2={CHART_H - P.b} stroke="var(--sep-op, rgba(255,255,255,0.08))" />
-              <text x={P.l - 6} y={CHART_H - P.b + 3} textAnchor="end" fontSize="9.5" fill="var(--label-2, #888)">
+              <line x1={P.l} y1={CHART_H - P.b} x2={CHART_W - P.r} y2={CHART_H - P.b} stroke="var(--sep-op)" />
+              <text x={P.l - 6} y={CHART_H - P.b + 3} textAnchor="end" fontSize="9.5" fill="var(--label-2)">
                 {fmtPace(maxPace, S.unit, { short: true })}
               </text>
 
               {/* Distance X-axis labels */}
-              <text x={P.l} y={CHART_H - 8} textAnchor="start" fontSize="9.5" fill="var(--label-2, #888)">
+              <text x={P.l} y={CHART_H - 8} textAnchor="start" fontSize="9.5" fill="var(--label-2)">
                 0
               </text>
-              <text x={CHART_W - P.r} y={CHART_H - 8} textAnchor="end" fontSize="9.5" fill="var(--label-2, #888)">
+              <text x={CHART_W - P.r} y={CHART_H - 8} textAnchor="end" fontSize="9.5" fill="var(--label-2)">
                 {formatDistance(totalDist, S.unit)}
               </text>
 
@@ -985,7 +985,7 @@ export default function ActivityDetail({
                 <path
                   d={chartData.map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(d.cumDist)} ${getPaceY(d.pace)}`).join(' ')}
                   fill="none"
-                  stroke="var(--accent, #10b981)"
+                  stroke="var(--acc)"
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -1000,7 +1000,7 @@ export default function ActivityDetail({
                     y1={P.t}
                     x2={hoverX}
                     y2={CHART_H - P.b}
-                    stroke="var(--accent, #10b981)"
+                    stroke="var(--acc)"
                     strokeWidth="1.5"
                     strokeDasharray="3 3"
                   />
@@ -1008,8 +1008,8 @@ export default function ActivityDetail({
                     cx={hoverX}
                     cy={hoverPaceY}
                     r="4.5"
-                    fill="var(--accent, #10b981)"
-                    stroke="#ffffff"
+                    fill="var(--acc)"
+                    stroke="#ffffff" /* literal: SVG presentation attributes cannot resolve var() */
                     strokeWidth="2"
                   />
                 </g>
@@ -1032,12 +1032,12 @@ export default function ActivityDetail({
               padding: 0,
               borderRadius: 10,
               overflow: 'hidden',
-              background: 'var(--card-bg, rgba(255,255,255,0.05))',
+              background: 'var(--surface)',
             }}
           >
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, textAlign: 'left' }}>
               <thead>
-                <tr style={{ borderBottom: '1px solid var(--sep-op, rgba(255,255,255,0.1))', color: 'var(--label-2, #888)' }}>
+                <tr style={{ borderBottom: '1px solid var(--sep-op)', color: 'var(--label-2)' }}>
                   <th style={{ padding: '10px 12px', width: 40 }}>#</th>
                   <th style={{ padding: '10px 12px' }}>{t('Distance')}</th>
                   <th style={{ padding: '10px 12px' }}>{t('Pace')}</th>
@@ -1055,14 +1055,14 @@ export default function ActivityDetail({
                       key={splitNum}
                       data-testid={`split-row-${splitNum}`}
                       style={{
-                        borderBottom: idx < splits.length - 1 ? '1px solid var(--sep-op, rgba(255,255,255,0.05))' : 'none',
-                        background: isFastest ? 'color-mix(in srgb, var(--accent, #10b981) 12%, transparent)' : 'transparent',
+                        borderBottom: idx < splits.length - 1 ? '1px solid var(--sep-op)' : 'none',
+                        background: isFastest ? 'color-mix(in srgb, var(--acc) 12%, transparent)' : 'transparent',
                       }}
                     >
                       <td style={{ padding: '10px 12px', fontWeight: 600 }}>{splitNum}</td>
                       <td style={{ padding: '10px 12px' }}>
                         {formatDistance(s.distance, S.unit)}
-                        {s.isPartial && <span style={{ fontSize: 11, color: 'var(--label-3, #666)', marginLeft: 4 }}>({t('partial')})</span>}
+                        {s.isPartial && <span style={{ fontSize: 11, color: 'var(--label-3)', marginLeft: 4 }}>({t('partial')})</span>}
                       </td>
                       <td style={{ padding: '10px 12px', fontWeight: isFastest ? 700 : 400 }}>
                         {fmtPace(s.pace, S.unit)}
@@ -1071,7 +1071,7 @@ export default function ActivityDetail({
                             style={{
                               marginLeft: 6,
                               fontSize: 10,
-                              color: 'var(--accent, #10b981)',
+                              color: 'var(--acc)',
                               border: '1px solid currentColor',
                               borderRadius: 4,
                               padding: '1px 4px',
@@ -1081,10 +1081,10 @@ export default function ActivityDetail({
                           </span>
                         )}
                       </td>
-                      <td style={{ padding: '10px 12px', color: 'var(--label-2, #888)' }}>
+                      <td style={{ padding: '10px 12px', color: 'var(--label-2)' }}>
                         {formatSplitTime(s.elapsedTime || s.movingTime)}
                       </td>
-                      <td style={{ padding: '10px 12px', textAlign: 'right', color: elevDiff >= 0 ? 'var(--blue, #3b82f6)' : 'var(--label-2, #888)' }}>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', color: elevDiff >= 0 ? 'var(--blue)' : 'var(--label-2)' }}>
                         {elevDiff >= 0 ? `+${Math.round(elevDiff)}` : `${Math.round(elevDiff)}`} {elevationUnit(S.unit)}
                       </td>
                     </tr>
