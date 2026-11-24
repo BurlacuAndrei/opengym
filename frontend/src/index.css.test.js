@@ -25,3 +25,30 @@ describe('index.css bottom-bar clearance', () => {
     expect(htmlPx).toBe(appPx)
   })
 })
+
+// Regression guard for issue #113 responsive shell: tablet 2-col at 768px,
+// desktop sidebar at 1024px, base mobile layout untouched (#101 guard).
+describe('index.css responsive shell', () => {
+  const block = w => {
+    const i = css.indexOf('@media (min-width:' + w + ')')
+    return i < 0 ? '' : css.slice(i, css.indexOf('\n}', i) + 2)
+  }
+
+  it('base #app max-width stays 560px (#101 regression guard)', () => {
+    expect(rule('#app')).toContain('max-width:560px')
+  })
+
+  it('has a 768px tablet block', () => {
+    expect(css).toContain('@media (min-width:768px)')
+  })
+
+  it('1024px block shows the sidebar and hides the bottom bar', () => {
+    const b = block('1024px')
+    expect(b).toContain('#sidebar{display:flex}')
+    expect(b).toContain('#tabbar{display:none}')
+  })
+
+  it('#sidebar exists and is hidden below 1024px', () => {
+    expect(css).toMatch(/#sidebar\{[^}]*display:none/)
+  })
+})

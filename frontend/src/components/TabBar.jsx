@@ -57,7 +57,7 @@ export default function TabBar() {
 
   if (!user && !isGuest) return null
   const cur = loc.pathname.split('/')[1] || 'home'
-  const on = k => cur === k || (cur === 'history' && k === 'stats') || (cur === 'settings' && k === 'home')
+  const on = k => cur === k || (cur === 'history' && k === 'stats') || (cur === 'privacy' && k === 'settings') || (cur === 'settings' && k === 'home')
 
   const resume = resolveTabBarResume({ S, cardioState, activeFlow })
   const resumeTarget = resume?.target || null
@@ -71,22 +71,37 @@ export default function TabBar() {
     openStartHubSheet()
   }
 
-  const Tab = ({ k, icon, to, label }) => (
-    <button className={on(k) ? 'on' : ''} onClick={() => nav(to)}>
+  // `active` lets the sidebar light a tab without the bottom-bar aliases above
+  // (e.g. on /settings the bottom bar falls back to Home, the sidebar to Settings).
+  const Tab = ({ k, icon, to, label, active }) => (
+    <button className={(active ?? on(k)) ? 'on' : ''} onClick={() => nav(to)}>
       <Icon name={icon} /><span>{label}</span>
+    </button>
+  )
+  const Start = () => (
+    <button className={'start' + (resumeTarget ? ' rec' : '')} onClick={handleCenterClick}>
+      <span className="cir"><Icon name={resumeTarget ? resumeIcon : 'dumbbell'} /></span>
+      <span>{resumeTarget ? t('Resume') : t('Start')}</span>
     </button>
   )
 
   return (
-    <nav id="tabbar">
-      <Tab k="home" icon="house" to="/home" label={t('Home')} />
-      <Tab k="plan" icon="calendar" to="/plan" label={t('Plan')} />
-      <button className={'start' + (resumeTarget ? ' rec' : '')} onClick={handleCenterClick}>
-        <span className="cir"><Icon name={resumeTarget ? resumeIcon : 'dumbbell'} /></span>
-        <span>{resumeTarget ? t('Resume') : t('Start')}</span>
-      </button>
-      <Tab k="stats" icon="chart" to="/stats" label={t('Stats')} />
-      <Tab k="library" icon="list" to="/library" label={t('Library')} />
-    </nav>
+    <>
+      <nav id="tabbar">
+        <Tab k="home" icon="house" to="/home" label={t('Home')} />
+        <Tab k="plan" icon="calendar" to="/plan" label={t('Plan')} />
+        <Start />
+        <Tab k="stats" icon="chart" to="/stats" label={t('Stats')} />
+        <Tab k="library" icon="list" to="/library" label={t('Library')} />
+      </nav>
+      <nav id="sidebar">
+        <Tab k="home" icon="house" to="/home" label={t('Home')} active={cur === 'home'} />
+        <Tab k="plan" icon="calendar" to="/plan" label={t('Plan')} />
+        <Tab k="stats" icon="chart" to="/stats" label={t('Stats')} />
+        <Tab k="library" icon="list" to="/library" label={t('Library')} />
+        <Tab k="settings" icon="gear" to="/settings" label={t('Settings')} />
+        <Start />
+      </nav>
+    </>
   )
 }
