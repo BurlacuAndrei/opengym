@@ -434,6 +434,20 @@ function StrengthStatsTab({ S, nav }) {
   )
 }
 
+// Mirrors calculateSessionLoad's duration resolution (lib/training-load.js):
+// explicit clock first, then start/end span, then a 3-minutes-per-set estimate.
+const sessionDurationMs = item => {
+  if (typeof item.durationMs === 'number' && isFinite(item.durationMs)) return Math.max(0, item.durationMs)
+  if (typeof item.durationSec === 'number' && isFinite(item.durationSec)) return Math.max(0, item.durationSec * 1000)
+  if (item.end && item.start && isFinite(item.end) && isFinite(item.start) && item.end > item.start) return item.end - item.start
+  let sets = 0
+  const tally = arr => { if (Array.isArray(arr)) for (const s of arr) if (s && s.done !== false) sets++ }
+  if (Array.isArray(item.entries)) item.entries.forEach(e => tally(e && e.sets))
+  else tally(item.sets)
+  if (typeof item.setCount === 'number' && isFinite(item.setCount) && item.setCount > 0) sets = Math.max(sets, item.setCount)
+  return sets > 0 ? sets * 3 * 60000 : 0
+}
+
 export default function Stats({ initialTab = 'overview' }) {
   let nav = () => {}
   try {
@@ -454,6 +468,25 @@ export default function Stats({ initialTab = 'overview' }) {
     .map(b => ({ t: b.t || new Date(b.d).getTime(), y: b.w, d: b.d }))
   const bw30 = bw.filter(b => (b.t || new Date(b.d).getTime()) > now - 30 * 86400000)
   const bwDelta30 = bw30.length > 1 ? bw30[bw30.length - 1].w - bw30[0].w : null
+
+  const volByWeek = new Map()
+  for (const item of allHistory) {
+    if (!item.d) continue
+    const wk = weekKey(item.d)
+    const entry = volByWeek.get(wk) || { durMs: 0, distM: 0, t: new Date(item.d + 'T12:00:00').getTime() }
+    entry.durMs += sessionDurationMs(item)
+    entry.distM += Number(item.distanceM) || 0
+    volByWeek.set(wk, entry)
+  }
+  const volumePts = [...volByWeek.values()]
+    .sort((a, b) => a.t - b.t)
+    .slice(-12)
+    .map(w => ({
+      t: w.t,
+      y: Math.round((w.durMs / 60000) * 10) / 10,
+      d: isoOf(new Date(w.t)),
+      note: fmtDur(w.durMs) + (w.distM > 0 ? ' · ' + fmtDist(w.distM, normUnit) : ''),
+    }))
 
   return <>
     <div className="hdr"><div><h1>{t('Stats')}</h1><div className="sub">{t('Progress & history')}</div></div>
@@ -493,6 +526,15 @@ export default function Stats({ initialTab = 'overview' }) {
             else if (items.length === 1) workoutDetailSheet(items[0])
             else if (items.length) calendarSheet(iso)
           }} />
+        </div>
+
+        <div className="card">
+          <h2>{t('Training volume')}</h2>
+          {volumePts.length > 0 ? (
+            <div className="chart"><LineChart points={volumePts} h={160} unit="min" /></div>
+          ) : (
+            <div className="muted small">{t('Log a session to see training volume trends.')}</div>
+          )}
         </div>
 
         <div className="card">

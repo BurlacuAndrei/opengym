@@ -96,6 +96,23 @@ describe('Segmented Multi-Sport Stats, History & Calendar (Issue #97)', () => {
     expect(html).toContain('Body weight')
   })
 
+  it('renders cross-sport Training volume card with weekly minutes and no NaN', () => {
+    const html = renderToStaticMarkup(React.createElement(Stats, { initialTab: 'overview' }))
+    expect(html).toContain('Training volume')
+    // 50min workout (end-start) + 30min cardio (durationMs) + 20min flow = 100min this week
+    expect(html).toContain('100')
+    expect(html).not.toContain('NaN')
+    expect(html).not.toContain('Infinity')
+  })
+
+  it('renders Training volume empty state when no sessions exist', () => {
+    useStore.setState({ S: JSON.parse(JSON.stringify(DEF)) })
+    const html = renderToStaticMarkup(React.createElement(Stats, { initialTab: 'overview' }))
+    expect(html).toContain('Training volume')
+    expect(html).toContain('Log a session to see training volume trends.')
+    expect(html).not.toContain('NaN')
+  })
+
   it('renders empty-state ACWR Training Rhythm safely without NaN', () => {
     useStore.setState({ S: JSON.parse(JSON.stringify(DEF)) })
     const html = renderToStaticMarkup(React.createElement(Stats, { initialTab: 'overview' }))
