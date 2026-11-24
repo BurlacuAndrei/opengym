@@ -114,7 +114,7 @@ export default function AdminCoach() {
               onClick={() => openSheet(close => <SetupTokenSheet close={close} onDone={load} label={meta.label} />)}>Add CLI token</Button>}
             {meta.deviceLogin && <Button size="sm" variant="primary" icon="key" disabled={busy}
               onClick={() => openSheet(close => <ChatGPTLoginSheet close={close} onDone={load} label={meta.label} />)}>Sign in with ChatGPT</Button>}
-            {meta.apiKey && !meta.setupToken && <Button size="sm" icon="lock" disabled={busy}
+            {meta.apiKey && <Button size="sm" icon="lock" disabled={busy}
               onClick={() => openSheet(close => <ApiKeySheet close={close} onDone={load} label={meta.label} />)}>Use an API key</Button>}
           </div>
         </>}

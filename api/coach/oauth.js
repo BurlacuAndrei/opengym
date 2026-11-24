@@ -155,7 +155,6 @@ export function setApiKey(k) {
   const keyStr = String(k || '').trim();
   if (!keyStr) throw new Error('paste an API key');
   if (providerMeta().deviceLogin) throw new Error('sign in with ChatGPT from the Codex device-login flow');
-  if (providerMeta().setupToken) throw new Error('use a Claude Code setup token for this provider');
   if (!providerMeta().apiKeyEnv) throw new Error('this provider takes no API key');
   save({ auth: { type: 'apikey', connectedAt: new Date().toISOString(), account: null, data: encrypt({ token: keyStr }) } });
 }
@@ -187,7 +186,7 @@ export function authStatus() {
   if (!cfg.auth) return { state: 'disconnected' };
   const auth = decrypt(cfg.auth.data);
   if (!auth) return { state: 'unreadable' };   // ./data restored without its secret file
-  if (cfg.provider === 'claude' && cfg.auth.type !== 'cli-token') {
+  if (cfg.provider === 'claude' && !['cli-token', 'apikey'].includes(cfg.auth.type)) {
     return { state: 'replace-required', type: cfg.auth.type, connectedAt: cfg.auth.connectedAt };
   }
   if (cfg.auth.expired) return { state: 'expired', account: cfg.auth.account, connectedAt: cfg.auth.connectedAt };

@@ -94,14 +94,18 @@ test('Codex uses its own ChatGPT CLI cache and never receives an API key', () =>
   assert.equal(cfg.isConnected(), false, 'a removed Codex cache fails closed');
 });
 
-test('legacy Claude credentials are disabled until replaced with a setup token', () => {
+test('Claude accepts a setup token or an API key; the retired browser OAuth stays rejected', () => {
   cfg.save({ enabled: true, provider: 'claude', auth: { type: 'apikey', data: cfg.encrypt({ token: 'sk-ant-key' }) } });
+  assert.equal(cfg.isConnected(), true);
+  assert.equal(auth.authStatus().state, 'connected');
+  const env = cfg.jobEnv('/tmp/jobdir');
+  assert.equal(env.ANTHROPIC_API_KEY, 'sk-ant-key');
+  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
+  assert.doesNotThrow(() => auth.setApiKey('sk-ant-key'));
+
+  cfg.save({ enabled: true, provider: 'claude', auth: { type: 'oauth', data: cfg.encrypt({ token: 'legacy-oauth' }) } });
   assert.equal(cfg.isConnected(), false);
   assert.equal(auth.authStatus().state, 'replace-required');
-  const env = cfg.jobEnv('/tmp/jobdir');
-  assert.equal(env.ANTHROPIC_API_KEY, undefined);
-  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
-  assert.throws(() => auth.setApiKey('sk-ant-key'), /setup token/);
 });
 
 test('the instance job log records outcomes, never contents', () => {
