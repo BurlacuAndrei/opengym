@@ -103,6 +103,9 @@ changes**, each with a before → after and a rationale naming the evidence:
 > *"Bench came in at RPE ≥ 9.5 for three sessions and stalled twice; swapping to dumbbell press
 > for four weeks."*
 
+Reviews also read cardio volume, training load with its ACWR risk zone, profile modalities,
+and your target event.
+
 Tick the ones you want and hit **Apply & Snapshot**. Advice with no plan change attached goes to a
 notes section and applies nothing. A review that finds no reason to change anything says so and
 sends no notification. Suggestions you turn down are remembered, so the next review doesn't
@@ -120,7 +123,7 @@ from, so the screen cannot drift from the payload — are:
 | Category | What it covers |
 | --- | --- |
 | `plan` | routines, exercises, sets/reps, schedule, progression settings |
-| `training` | logged sets, targets, effort ratings, durations, PRs in the review window |
+| `training` | logged sets, targets, effort ratings, durations, PRs, cardio activities + ACWR load in the review window |
 | `bodyweight` | weigh-ins in the window and your goal weight |
 | `profile` | the intake answers you gave the Coach, including any limitations |
 | `prefs` | unit, language, effort scale |

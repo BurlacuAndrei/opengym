@@ -4,9 +4,9 @@
 
 <br>
 
-**A self-hosted gym & body-weight tracker you actually own.**
+**A self-hosted strength, cardio & flow tracker you actually own.**
 
-Plan your week, run guided workouts, track every set and your body weight over time —
+Plan your week, run guided workouts, flow sessions and cardio, track every set, every run and your body weight over time —
 on your phone, synced across devices, behind your own passkey login.
 No account on someone else's server, no subscription, no ads. Just `docker compose up`.
 

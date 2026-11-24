@@ -27,15 +27,15 @@ The time-series of geographic coordinates, elevation, heart rate, and cadence re
 _Avoid_: Breadcrumb log, GPS trace
 
 **Route**:
-A reusable geographic path (imported from GPX or saved from a Track) that a lifter can follow during a Cardio Activity.
+A reusable geographic path (imported from GPX or saved from a Track) that an athlete can follow during a Cardio Activity.
 _Avoid_: Course, path template
 
 ### Coaching
 
 **Coach**:
-The training advisor that reads a lifter's plan and recent training window to draft a new weekly plan or propose evidence-backed adjustments.
+The training advisor that reads an athlete's plan and recent training window to draft a new weekly plan or propose evidence-backed adjustments.
 _Avoid_: AI assistant, bot, virtual trainer
 
 **Proposal**:
-A pending Coach recommendation awaiting the lifter's decision—either a complete initial plan (`create`) or a discrete set of changes to the active plan (`review`).
+A pending Coach recommendation awaiting the athlete's decision—either a complete initial plan (`create`) or a discrete set of changes to the active plan (`review`).
 _Avoid_: Suggestion batch, draft plan, diff
